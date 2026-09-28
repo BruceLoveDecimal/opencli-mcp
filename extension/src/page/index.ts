@@ -8,9 +8,10 @@ import {
   ACT_MARK, FRAME_MARK, ENGINE_GLOBAL, PAGE_GLOBAL,
   type ResolveArgs, type ResolveOutcome, type ResolveFail, type Candidate, type FindArgs, type FindResult, type FindEntry, type QueryFindResult, type UploadTarget,
   type AriaArgs, type PointInfo, type FrameProbeResult, type SettleArgs, type SelectResult, type ElementAtResult, type Box, type Expectation, type CheckResult,
-  type ReadTextArgs, type ReadTextResult, type DomClickArgs, type DomClickResult,
+  type ReadTextArgs, type ReadTextResult, type DomClickArgs, type DomClickResult, type Locators, type LocatorInfo,
 } from '../../../src/shared/page-contract.js';
 import { collapseAria, subtreeByRef } from '../../../src/shared/aria-collapse.js';
+import { createRecorder } from './recorder.js';
 export { collapseAria, subtreeByRef };
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -38,8 +39,22 @@ const is = (el: Element, name: string): boolean => stateOf(el, name).matches;
 function box(el: Element): Box { const r = el.getBoundingClientRect(); return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) }; }
 const text = (el: Element): string => ((el as HTMLElement).innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
 
-function replaySelector(el: Element): string | null {
-  try { return injected().generateSelector(el, { testIdAttributeName: 'data-testid' }).selector as string; } catch { return null; }
+function replaySelector(el: Element, opts: { noText?: boolean } = {}): string | null {
+  try { return injected().generateSelector(el, { testIdAttributeName: 'data-testid', ...opts }).selector as string; } catch { return null; }
+}
+/** A selector as Playwright locator code (Playwright's asLocator); falls back to page.locator(<selector>), which Playwright also accepts. */
+function locatorCode(lang: 'javascript' | 'python', selector: string): string {
+  try { const code = injected().utils.asLocator(lang, selector); if (typeof code === 'string' && code) return code; } catch { /* unparsable selector */ }
+  return `locator(${JSON.stringify(selector)})`;
+}
+function locatorsOf(selector: string): Locators { return { javascript: locatorCode('javascript', selector), python: locatorCode('python', selector) }; }
+const SECRET = /password|passcode|passwd|\botp\b|one[-_ ]?time|\b(?:2fa|mfa)\b|\bcc-|cvc|cvv|csc|card[-_ ]?number|security[-_ ]?code|\biban\b|account[-_ ]?number|routing|ssn|social[-_ ]?security/i;
+/** Narrower than isCredentialField: a username or email is useful in generated code, a password or card number is not. */
+export function isSecretField(el: Element): boolean {
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) return false;
+  if ((el as HTMLInputElement).type === 'password') return true;
+  const hay = ['autocomplete', 'id', 'name', 'placeholder', 'aria-label', 'title'].map((a) => el.getAttribute(a) || '').join(' ');
+  return SECRET.test(hay);
 }
 function roleOf(el: Element): string {
   try { const u = injected().utils; return (u?.getAriaRole && u.getAriaRole(el)) || el.getAttribute('role') || ''; } catch { return el.getAttribute('role') || ''; }
@@ -125,8 +140,19 @@ export async function resolve(args: ResolveArgs): Promise<ResolveOutcome> {
     hit: hit === 'done' ? 'target' : 'other',
     blocker: hit === 'done' ? null : (hit && hit.hitTargetDescription) || 'another element',
     editable: is(el, 'editable'), checkable, checked: checkable ? is(el, 'checked') : false, isSelect: tag === 'select',
-    ref: ariaRefOf(el), selector: replaySelector(el), usedSelector,
+    ref: ariaRefOf(el), ...withLocator(replaySelector(el)), ...(isSecretField(el) && { secret: true }), usedSelector,
   };
+}
+function withLocator(selector: string | null): { selector: string | null; locator?: Locators } { return selector ? { selector, locator: locatorsOf(selector) } : { selector }; }
+
+/** A selector or `aria-ref=eN` as a replayable selector plus locator code: what generated code uses for expectations. */
+export function locatorFor(args: { selector: string }): LocatorInfo | null {
+  if (/^aria-ref=/.test(args.selector)) {
+    const el = query(args.selector)[0];
+    const sel = el ? replaySelector(el) : null;
+    return sel ? { selector: sel, locator: locatorsOf(sel) } : null;
+  }
+  return { selector: args.selector, locator: locatorsOf(args.selector) };
 }
 
 /** Mark the element under a viewport point for a point-targeted action. */
@@ -205,7 +231,7 @@ export function resolveUpload(args: { selector: string; fallback: string | null;
   if (input.disabled) return { error: { code: 'not_enabled', message: 'The file input is disabled.' } };
   if (args.files > 1 && !input.multiple) return { error: { code: 'invalid_args', message: 'This file input accepts only one file.' } };
   markAct(input);
-  return { ok: true, ref: ariaRefOf(input), selector: replaySelector(input), matches_n: 1 };
+  return { ok: true, ref: ariaRefOf(input), ...withLocator(replaySelector(input)), matches_n: 1 };
 }
 export function fileSelectionCount(): number { const el = actEl(); return el instanceof HTMLInputElement ? el.files?.length ?? 0 : 0; }
 
@@ -276,7 +302,7 @@ export function domClick(args: DomClickArgs): DomClickResult {
   markAct(el);
   (el as HTMLElement).click();
   const b = el.getBoundingClientRect();
-  return { ok: true, ref: ariaRefOf(el), tag: el.tagName.toLowerCase(), selector: replaySelector(el), x: b.width > 0 ? b.left + b.width / 2 : 0, y: b.height > 0 ? b.top + b.height / 2 : 0 };
+  return { ok: true, ref: ariaRefOf(el), tag: el.tagName.toLowerCase(), ...withLocator(replaySelector(el)), x: b.width > 0 ? b.left + b.width / 2 : 0, y: b.height > 0 ? b.top + b.height / 2 : 0 };
 }
 
 // ── reading: linear text, not the action map ──
@@ -521,7 +547,8 @@ const describe = (el: Element, i: number): FindEntry => {
   for (const a of ['id', 'name', 'type', 'placeholder', 'aria-label', 'title', 'href', 'data-testid', 'value']) {
     const v = el.getAttribute(a); if (v) attrs[a] = a === 'value' && isCredentialField(el) ? '<redacted>' : v.slice(0, 200);
   }
-  return { nth: i, ref: ariaRefOf(el), selector: replaySelector(el), tag: el.tagName.toLowerCase(), role: roleOf(el), name: nameOf(el).slice(0, 120), text: text(el).slice(0, 120), attrs, visible: is(el, 'visible'), enabled: stateOf(el, 'enabled').received.startsWith('error:') ? null : is(el, 'enabled'), editable: stateOf(el, 'editable').received.startsWith('error:') ? null : is(el, 'editable'), box: box(el) };
+  const selector = replaySelector(el);
+  return { nth: i, ref: ariaRefOf(el), selector, locator: selector ? locatorCode('javascript', selector) : null, tag: el.tagName.toLowerCase(), role: roleOf(el), name: nameOf(el).slice(0, 120), text: text(el).slice(0, 120), attrs, visible: is(el, 'visible'), enabled: stateOf(el, 'enabled').received.startsWith('error:') ? null : is(el, 'enabled'), editable: stateOf(el, 'editable').received.startsWith('error:') ? null : is(el, 'editable'), box: box(el) };
 };
 
 /** Same engine, same selector and fallback as act; every entry is replayable via `selector` and `ref`. */
@@ -616,7 +643,12 @@ export function check(args: Expectation): CheckResult {
   return { ok: failed.length === 0, failed, url: location.href, title: document.title };
 }
 
-export const api = { check, resolve, resolveUpload, fileSelectionCount, pointInfo, focus, readValue, fill, nativeSet, isChecked, select, caretToEnd, clearActMark, settle, frameProbe, clearFrameMark, aria, find, findByQuery, elementAt, annotate, unannotate, armClickProbe, readClickProbe, domClick, readText };
+// ── recording: what a person does in this frame, reported through the engine-world binding (see recorder.ts) ──
+const recorder = createRecorder({ replaySelector, locatorsOf, isSecretField });
+export function recordStart(): boolean { return recorder.start(); }
+export function recordStop(): boolean { return recorder.stop(); }
+
+export const api = { recordStart, recordStop, locatorFor, check, resolve, resolveUpload, fileSelectionCount, pointInfo, focus, readValue, fill, nativeSet, isChecked, select, caretToEnd, clearActMark, settle, frameProbe, clearFrameMark, aria, find, findByQuery, elementAt, annotate, unannotate, armClickProbe, readClickProbe, domClick, readText };
 export type PageApi = typeof api;
 
 (globalThis as any)[PAGE_GLOBAL] = api;

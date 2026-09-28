@@ -13,13 +13,19 @@ import { Tab } from './tab.js';
 import { Browser } from './browser.js';
 import { PROTOCOL_REVISION } from '../protocol.js';
 import type { SessionContext } from './context.js';
+import { exportScript, type ExportedScript } from './script.js';
+import type { CodeLanguage } from '../codegen/playwright.js';
 
 export interface AgentApi {
   agent: { browsers: { getDefault(): Promise<Browser> }; browser: Browser; documentation: { get(name: string): string | null } };
   sites: Record<string, unknown> & { search(q: string, limit?: number): Promise<unknown>; list(): unknown; enable(site: string, opts?: { write?: boolean }): Promise<{ site: string; tools: string[] }>; disable(site: string): boolean; run(site: string, name: string, args?: Record<string, unknown>): Promise<unknown> };
   recon: { discover(tab: Tab, opts?: Parameters<typeof discoverEndpoints>[1]): Promise<DiscoverResult> };
   tools: { define(def: ToolDefinition | (Omit<ToolDefinition, 'func'> & { func?: string | ((ctx: Record<string, unknown>) => unknown) })): ReturnType<Runtime['defineTool']>; try(draftId: string, args: Record<string, unknown>, expect: DraftExpectation): ReturnType<Runtime['tryToolDraft']>; activate(draftId: string): ReturnType<Runtime['activateToolDraft']>; discard(draftId: string): ReturnType<Runtime['discardToolDraft']>; list(): ReturnType<typeof listDefinedTools>; remove(site: string, name: string): ReturnType<Runtime['removeTool']> };
-  session: { id: string };
+  session: {
+    id: string;
+    /** Everything this session did in the browser (open/goto/act/expect), as a Playwright test file. `tab` limits it to one tab. */
+    exportScript(opts?: { language?: CodeLanguage; tab?: string; title?: string }): ExportedScript;
+  };
 }
 
 export function createAgentApi(rt: Runtime, sessionId: string): AgentApi {
@@ -78,6 +84,6 @@ export function createAgentApi(rt: Runtime, sessionId: string): AgentApi {
       list: () => listDefinedTools(),
       remove: (site: string, name: string) => rt.removeTool(site, name),
     },
-    session: { id: sessionId },
+    session: { id: sessionId, exportScript: (opts = {}) => exportScript(ctx, opts) },
   };
 }

@@ -170,9 +170,25 @@ export function createMcpServer(rt: Runtime, sessionId: string, opts: { version?
     return ok({ tab: t.id, ...(await t.download(afterSequence, timeoutMs)) });
   }));
   if (!rt.hasFeature('downloads')) downloadTool.disable();
+  // ── recording a person's demonstration ──
+  const recordStartTool = server.registerTool('record_start', { title: 'Record the user', description: 'Start recording what the user does in a tab (and in popups it opens), for when the user wants to demonstrate a flow instead of describing it. Brings the tab to the front. Then ask the user to perform the flow and tell you when they are done; call record_stop then. Your own tab_act/navigation on the tab is not recorded. Password, OTP and card values are never recorded.',
+    inputSchema: { tab: z.string().optional().describe('required when the session has more than one tab'), focus: z.boolean().default(true).describe('bring the tab to the front for the user') },
+    annotations: { readOnlyHint: true },
+  }, async ({ tab, focus }) => run(async () => { const t = await tabOf(tab); return ok(await t.recording.start({ focus })); }));
+  const recordStopTool = server.registerTool('record_stop', { title: 'Stop recording', description: 'Stop the recording from record_start. Returns the flow as a Playwright test (code), as tab_act-shaped steps whose target.selector replays with tab_act, and network.afterSequence for network_inspect list to see the requests the flow made (the basis for a tools_define adapter). The steps are also added to session_export_script.',
+    inputSchema: { tab: z.string().optional().describe('the recorded tab; optional while only one tab is being recorded'), language: z.enum(['javascript', 'python']).default('javascript').describe('javascript = @playwright/test, python = pytest-playwright'), title: z.string().max(120).optional().describe('test name') },
+    annotations: { readOnlyHint: true },
+  }, async ({ tab, language, title }) => run(async () => {
+    const recorded = [...state.recordings.keys()];
+    const t = await tabOf(tab ?? (recorded.length === 1 ? recorded[0] : undefined));
+    const { code, ...rest } = await t.recording.stop({ language, title });
+    return { content: [text(safeStringify({ ok: true, ...rest }, 60_000)), text(code)] };
+  }));
+  if (!rt.hasFeature('recorder')) { recordStartTool.disable(); recordStopTool.disable(); }
   const onFeaturesChanged = (): void => {
     if (networkTool.enabled !== rt.hasFeature('network')) networkTool.update({ enabled: rt.hasFeature('network') });
     if (downloadTool.enabled !== rt.hasFeature('downloads')) downloadTool.update({ enabled: rt.hasFeature('downloads') });
+    for (const tool of [recordStartTool, recordStopTool]) if (tool.enabled !== rt.hasFeature('recorder')) tool.update({ enabled: rt.hasFeature('recorder') });
     if (server.isConnected()) server.sendResourceListChanged();
   };
   if (persistent) rt.on('features-changed', onFeaturesChanged);
@@ -189,6 +205,15 @@ export function createMcpServer(rt: Runtime, sessionId: string, opts: { version?
     return ok(data, images);
   }));
   server.registerTool('tab_expect', { title: 'Expect', description: 'Assert what the page must show now. At least one of text / notText / url / title / selector / ref is required (visible:false requires absence, and needs selector or ref). Polls up to timeout seconds; fails with expectation_failed.', inputSchema: { tab: z.string().optional().describe('required when the session has more than one tab'), text: z.string().optional(), notText: z.string().optional(), url: z.string().optional(), title: z.string().optional(), selector: z.string().optional(), ref: z.string().optional(), visible: z.boolean().optional().describe('with selector or ref; false requires absence'), timeout: z.number().default(5) }, annotations: { readOnlyHint: true } }, async ({ tab, timeout, ...what }) => run(async () => { checkExpect(what); const t = await tabOf(tab); return ok({ tab: t.id, ...(await t.expect(what, { timeoutMs: timeout * 1000 })) }); }));
+
+  // ── code ──
+  server.registerTool('session_export_script', { title: 'Export Playwright script', description: 'Everything this session did in the browser (tab_open/claim, navigation, tab_act, passing tab_expect) as a runnable Playwright test. Each tab_act result already carries the code of its own step. Password, OTP and card fields are read from SECRET_n environment variables.',
+    inputSchema: { language: z.enum(['javascript', 'python']).default('javascript').describe('javascript = @playwright/test, python = pytest-playwright'), tab: z.string().optional().describe('only this tab’s steps'), title: z.string().max(120).optional().describe('test name') },
+    annotations: { readOnlyHint: true },
+  }, async ({ language, tab, title }) => run(async () => {
+    const { code, ...meta } = api.session.exportScript({ language, tab, title });
+    return { content: [text(safeStringify({ ok: true, ...meta }, 4_000)), text(code)] };
+  }));
 
   // ── sites ──
   server.registerTool('sites_search', { title: 'Find site capabilities', description: 'No query: list available sites with sample commands. With a task, site, or domain as query: find matching commands. Results include args[{name,type,required,help,default,choices}] for site_run. Do not invent parameters.', inputSchema: { query: z.string().optional().describe('task, site, or domain; omit to browse available sites'), limit: z.number().int().min(1).max(100).default(20) }, annotations: { readOnlyHint: true } }, async ({ query, limit }) => run(async () => query?.trim() ? ok({ results: await api.sites.search(query, limit) }) : ok({ sites: rt.registry.sites().slice(0, limit) })));

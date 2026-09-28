@@ -78,12 +78,16 @@ For integrations and custom workflows, the main tools are:
 | Browse a page | `tab_open`, `tab_observe`, `tab_read`, `tab_act`, `tab_expect` |
 | Find or use an existing tab | `tab_list`, `tab_claim` |
 | Wait for a download started by an action | `tab_download_wait` |
+| Get Playwright code for what the agent did | `session_export_script` (each `tab_act` also returns its own `code`) |
+| Record a flow the user demonstrates | `record_start`, `record_stop` |
 | Keep a tab open or close it | `tab_release`, `tab_close` |
 | Finish a browser session | `session_finalize` |
 | Discover and run site commands | `sites_search`, `site_run` |
 | Define and verify a site adapter | `tools_define`, `tools_try`, `tools_activate` |
 | Run multi-step JavaScript | `js`, `js_reset` |
 | Read built-in documentation | `docs_list`, `docs_get` |
+
+Every `tab_act` result carries the step as Playwright code, and `session_export_script` exports the whole session as a runnable Playwright test (JavaScript or Python). When showing is easier than describing, the user can demonstrate a flow: `record_start` records their clicks and typing in that tab (including iframes and popups), and `record_stop` returns it as Playwright code, as steps the agent can replay with `tab_act`, and with the network requests it made — the starting point for a site adapter. Password, OTP and card values are never recorded or written into code. The locators come from Playwright's own generator, the same engine `tab_act` uses.
 
 The browser workflow is **observe → act → verify → finalize**. `tab_observe` is the action map (accessibility snapshot with element references); pass its `snapshotId` as `since` for an exact diff. `tab_read` is rendered document text; pass its `readId` and `nextStart` back together to continue the same capture. Actions wait for their targets to be ready before dispatching browser input.
 
@@ -148,6 +152,7 @@ npm run build:ext        # rebuild the extension
 npm test                 # focused regression tests
 npm run smoke:setup      # isolated setup and Native Messaging end-to-end check
 npm run smoke:browser    # end-to-end check with a connected Chrome extension
+npm run smoke:recorder   # isolated Chromium + real extension: generated code and recording
 ```
 
 Run the tests relevant to your change. `npm run check` runs typecheck, build, and the full test suite when a broader check is needed. For browser changes, use the browser smoke test. `docs/api-reference.md` is generated during the build; update its TypeScript source rather than editing the generated file.

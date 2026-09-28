@@ -535,12 +535,16 @@ const oopifByTab = new Map<number, Map<string, OopifSession>>(); // tabId → ta
 const oopifWaiters = new Map<string, Set<() => void>>();          // `${tabId}:${frameId}` → resolvers waiting for attach
 
 export function oopifSessions(tabId: number): OopifSession[] { return [...(oopifByTab.get(tabId)?.values() ?? [])]; }
+/** Listeners told about every OOPIF session as it attaches (the recorder arms new frames with them). */
+const oopifListeners = new Set<(tabId: number, sessionId: string) => void>();
+export function onOopifAttached(listener: (tabId: number, sessionId: string) => void): void { oopifListeners.add(listener); }
 
 function noteOopif(tabId: number, info: { targetId: string; type: string; url: string }, sessionId: string, parentSessionId?: string): void {
   if (info.type !== 'iframe') return;
   if (!oopifByTab.has(tabId)) oopifByTab.set(tabId, new Map());
   oopifByTab.get(tabId)!.set(info.targetId, { sessionId, targetId: info.targetId, url: info.url, parentSessionId });
   for (const w of oopifWaiters.get(`${tabId}:${info.targetId}`) ?? []) w();
+  for (const l of oopifListeners) { try { l(tabId, sessionId); } catch { /* a listener must not break tracking */ } }
   // the child may host further OOPIFs: auto-attach from its session too (Page must be enabled for frame trees)
   void sendDebuggerCommand({ tabId, sessionId } as chrome.debugger.Debuggee, 'Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, 3_000).catch(() => {});
   void sendDebuggerCommand({ tabId, sessionId } as chrome.debugger.Debuggee, 'Page.enable', undefined, 3_000).catch(() => {});

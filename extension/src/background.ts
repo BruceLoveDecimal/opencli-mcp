@@ -12,6 +12,7 @@ import { NativeHost } from './native';
 import { SessionManager, SessionError, type Session } from './sessions';
 import { performAct, ActError } from './act';
 import { evaluateInEngine, evaluateMain, registerFrameTracking, forgetTab as forgetEngineTab } from './world';
+import * as recorder from './recorder';
 
 const CDP_ALLOWLIST = new Set([
   'Accessibility.enable', 'Accessibility.getFullAXTree', 'Accessibility.getPartialAXTree',
@@ -29,6 +30,7 @@ const sessions = new SessionManager((e) => host.event(e));
 
 executor.registerListeners();
 registerFrameTracking();
+recorder.registerRecorderListeners();
 chrome.tabs.onRemoved.addListener((tabId) => forgetEngineTab(tabId));
 chrome.webNavigation.onCommitted.addListener((d) => { if (d.frameId === 0) forgetEngineTab(d.tabId); });
 chrome.runtime.onInstalled.addListener(() => host.connect());
@@ -77,7 +79,7 @@ async function handleCommand(cmd: Command): Promise<Result> {
         const downloadFrom = executor.downloadCursor(tabId);
         // the action budget is the spec's own timeout (default 3s) — never the whole command deadline
         // Show the cursor at the action point but never block input on its arrival (waitForArrival:false) — the overlay is a UX affordance, not on the latency path.
-        const { result, error, openedTabs } = await sessions.withChildTabs(tabId, () => performAct(tabId, { ...cmd.act!, timeoutMs: Math.min(cmd.act!.timeoutMs ?? 3000, 60_000) }, { aggressive: s.surface === 'browser', cursor: cmd.act!.cursor ? (x, y) => sessions.cursor(s, tabId, x, y, false) : undefined }));
+        const { result, error, openedTabs } = await recorder.asAgent(tabId, () => sessions.withChildTabs(tabId, () => performAct(tabId, { ...cmd.act!, timeoutMs: Math.min(cmd.act!.timeoutMs ?? 3000, 60_000) }, { aggressive: s.surface === 'browser', cursor: cmd.act!.cursor ? (x, y) => sessions.cursor(s, tabId, x, y, false) : undefined })));
         const started = executor.pageDownloadsAfter(tabId, downloadFrom).map(({ seq, guid, url, suggestedFilename }) => ({ seq, ...(guid && { guid }), url, suggestedFilename }));
         if (error) {
           const failure = errorResult(cmd.id, error);
@@ -87,6 +89,13 @@ async function handleCommand(cmd: Command): Promise<Result> {
         return pageScoped(cmd.id, tabId, { ...result, ...(openedTabs.length && { openedTabs }), download: { afterSequence: downloadFrom, started } });
       }
       case 'navigate': return await handleNavigate(cmd, s);
+      case 'record': {
+        const tabId = await sessions.resolveTab(s, cmd.page);
+        const op = cmd.recordOp ?? 'read';
+        if (op === 'start') { await ensureLoaded(tabId); return pageScoped(cmd.id, tabId, await recorder.start(tabId, { focus: cmd.focus })); }
+        if (op === 'stop') return pageScoped(cmd.id, tabId, await recorder.stop(tabId));
+        return pageScoped(cmd.id, tabId, await recorder.read(tabId, cmd.afterSequence ?? 0, cmd.limit ?? 500));
+      }
       case 'tabs': return await handleTabs(cmd, s);
       case 'cookies': return await handleCookies(cmd);
       case 'screenshot': { const tabId = await sessions.resolveTab(s, cmd.page); return pageScoped(cmd.id, tabId, await executor.screenshot(tabId, { format: cmd.format, quality: cmd.quality, fullPage: cmd.fullPage, width: cmd.width, height: cmd.height })); }
@@ -121,10 +130,12 @@ async function handleCommand(cmd: Command): Promise<Result> {
         const tabId = await sessions.resolveTab(s, cmd.page);
         const op = cmd.historyOp ?? 'reload';
         // fire, do not await: with a debugger attached the reload/goBack promise can resolve only after the navigation, or never
-        const trigger = op === 'reload' ? chrome.tabs.reload(tabId) : op === 'back' ? chrome.tabs.goBack(tabId) : chrome.tabs.goForward(tabId);
-        trigger.catch((e) => console.warn(`[opencli-mcp] ${op} trigger: ${e instanceof Error ? e.message : String(e)}`));
-        await Promise.race([trigger, new Promise((r) => setTimeout(r, 300))]); // let the navigation start before polling status
-        const t = await waitForLoad(tabId, 15_000);
+        const t = await recorder.asAgent(tabId, async () => {
+          const trigger = op === 'reload' ? chrome.tabs.reload(tabId) : op === 'back' ? chrome.tabs.goBack(tabId) : chrome.tabs.goForward(tabId);
+          trigger.catch((e) => console.warn(`[opencli-mcp] ${op} trigger: ${e instanceof Error ? e.message : String(e)}`));
+          await Promise.race([trigger, new Promise((r) => setTimeout(r, 300))]); // let the navigation start before polling status
+          return waitForLoad(tabId, 15_000);
+        });
         const lease = s.leases.get(tabId); if (lease) { lease.url = t.url; lease.title = t.title; }
         return pageScoped(cmd.id, tabId, { op, url: t.url, title: t.title, timedOut: t.status !== 'complete' });
       }
@@ -207,9 +218,8 @@ async function handleNavigate(cmd: Command, s: Session): Promise<Result> {
   let navError: string | null = null;
   const onErr = (d: chrome.webNavigation.WebNavigationFramedErrorCallbackDetails) => { if (d.tabId === tabId && d.frameId === 0) navError = d.error; };
   chrome.webNavigation.onErrorOccurred.addListener(onErr);
-  await chrome.tabs.update(tabId, { url: target });
   let timedOut = false;
-  await new Promise<void>((resolve) => {
+  await recorder.asAgent(tabId, async () => { await chrome.tabs.update(tabId, { url: target }); await new Promise<void>((resolve) => {
     let done = false;
     const finish = () => { if (done) return; done = true; chrome.tabs.onUpdated.removeListener(listener); chrome.webNavigation.onErrorOccurred.removeListener(onErr); clearTimeout(timer); clearTimeout(check); resolve(); };
     const isDone = (url?: string) => normalizeUrl(url) === normalizeUrl(target) || normalizeUrl(url) !== beforeNorm;
@@ -217,7 +227,7 @@ async function handleNavigate(cmd: Command, s: Session): Promise<Result> {
     chrome.tabs.onUpdated.addListener(listener);
     const check = setTimeout(async () => { try { const t = await chrome.tabs.get(tabId); if (t.status === 'complete' && isDone(t.url)) finish(); } catch { finish(); } }, 100);
     const timer = setTimeout(() => { timedOut = true; finish(); }, 15_000);
-  });
+  }); });
   chrome.webNavigation.onErrorOccurred.removeListener(onErr);
   const after = await chrome.tabs.get(tabId);
   if (navError) return notLoaded(cmd.id, target, navError);

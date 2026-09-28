@@ -20,6 +20,9 @@ export interface ResolveArgs {
   align: { block: string; inline: string };
 }
 
+/** A replay selector rendered as Playwright locator code (Playwright's own asLocator), per language. */
+export interface Locators { javascript: string; python: string }
+
 export interface Candidate { tag: string; role: string; text: string; ref: string | null; visible: boolean; box: Box }
 export interface Box { x: number; y: number; w: number; h: number }
 
@@ -35,6 +38,10 @@ export interface Resolved {
   ref: string | null;
   /** Playwright-generated selector for replay */
   selector: string | null;
+  /** `selector` as Playwright locator code */
+  locator?: Locators;
+  /** a password/OTP/card field: generated code never carries its value */
+  secret?: boolean;
   usedSelector: string;
 }
 export interface ResolveFail { error: { code: string; message: string; hint?: string; candidates?: Candidate[] }; retry?: boolean }
@@ -45,6 +52,8 @@ export interface FindEntry {
   nth: number;
   ref: string | null;
   selector: string | null;
+  /** `selector` as Playwright JavaScript locator code, e.g. getByRole('button', { name: 'Save' }) */
+  locator?: string | null;
   tag: string; role: string; name: string; text: string;
   attrs: Record<string, string>;
   visible: boolean; enabled: boolean | null; editable: boolean | null;
@@ -67,8 +76,8 @@ export interface ReadTextArgs { maxChars?: number; start?: number; readId?: stri
 export interface ReadTextResult { readId: string; text: string; complete: boolean; reason?: 'budget' | 'scan_limit' | 'unbounded' | 'stale'; chars: number; start: number; nextStart?: number }
 
 export interface DomClickArgs { selector: string; fallback: string | null }
-export interface UploadTarget { ok: true; ref: string | null; selector: string | null; matches_n: number }
-export interface DomClickOk { ok: true; ref: string | null; tag: string; selector: string | null; x: number; y: number }
+export interface UploadTarget { ok: true; ref: string | null; selector: string | null; locator?: Locators; matches_n: number }
+export interface DomClickOk { ok: true; ref: string | null; tag: string; selector: string | null; locator?: Locators; x: number; y: number }
 export type DomClickResult = DomClickOk | ResolveFail
 
 export interface PointInfo { tag: string; editable: boolean; isSelect: boolean }
@@ -84,3 +93,34 @@ export interface ElementAtResult { matches_n: number; entries: FindEntry[] }
 /** What a flow expects of the page at a step; every field given must hold. */
 export interface Expectation { text?: string; notText?: string; selector?: string; ref?: string; url?: string; title?: string; visible?: boolean }
 export interface CheckResult { ok: boolean; failed: string[]; url: string; title: string }
+
+/** A selector (or `aria-ref=eN`) rewritten as a replayable selector and its locator code; null when nothing matches. */
+export interface LocatorInfo { selector: string; locator: Locators }
+
+/** Name of the CDP binding the recorder reports through (Runtime.addBinding, scoped to the engine world). */
+export const RECORD_BINDING = '__opencliRecord';
+/** One user action seen by the page-side recorder. Values of secret fields never leave the page. */
+export interface RecordedAction {
+  name: 'click' | 'check' | 'uncheck' | 'fill' | 'select' | 'press' | 'setInputFiles';
+  selector: string;
+  locator: Locators;
+  /** fill */
+  text?: string;
+  secret?: boolean;
+  /** press */
+  key?: string;
+  /** Playwright bitmask: Alt=1, Control=2, Meta=4, Shift=8 */
+  modifiers?: number;
+  /** click */
+  button?: 'left' | 'middle' | 'right';
+  clickCount?: number;
+  /** select: option values */
+  options?: string[];
+  /** setInputFiles: file names only (paths are not visible to the page) */
+  files?: string[];
+  /** iframe index path from the top document (index among `iframe,frame` at each level); null when a cross-origin parent hides it */
+  frame?: number[] | null;
+  frameUrl?: string;
+  /** page-side time, ms since epoch */
+  ts: number;
+}

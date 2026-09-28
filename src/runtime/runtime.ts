@@ -16,6 +16,7 @@ import { createExtensionPage, type ExtensionRuntimePage } from '../backends/exte
 import type { RuntimePage } from '../backends/page-types.js';
 import { JsSession } from '../mcp/js-session.js';
 import { Tab, createAgentApi, type AgentApi } from '../api/agent.js';
+import type { CodeStep } from '../codegen/playwright.js';
 
 export type Backend = 'extension' | 'none';
 
@@ -46,6 +47,12 @@ export interface SessionState {
   lastObserve: Map<string, { id: string; text: string }>;
   /** Network entries seen per tab, with monotonically increasing sequence numbers for cursor-based reads. */
   netLog: Map<string, { seq: number; entries: Array<Record<string, unknown> & { seq: number }>; seen: Set<string>; bodyChars: number }>;
+  /** Playwright code steps of what this session did (open/goto/act/expect), oldest first; bounded (see api/script.ts). */
+  script: CodeStep[];
+  /** set once the oldest steps were dropped */
+  scriptTruncated?: boolean;
+  /** tabs being recorded (record_start): where the recording began and the network cursor at that moment */
+  recordings: Map<string, { startedAt: number; url?: string; networkFrom: number }>;
   finalized: boolean;
 }
 
@@ -107,7 +114,7 @@ export class Runtime extends EventEmitter<RuntimeEvents> implements PageProvider
   session(id: string): SessionState {
     let s = this.sessions.get(id);
     if (!s) {
-      s = { id, createdAt: Date.now(), pages: new Map(), tabLocks: new Map(), enabledSites: new Map(), capabilities: new Set(), observationSeq: 0, lastObserve: new Map(), netLog: new Map(), finalized: false };
+      s = { id, createdAt: Date.now(), pages: new Map(), tabLocks: new Map(), enabledSites: new Map(), capabilities: new Set(), observationSeq: 0, lastObserve: new Map(), netLog: new Map(), script: [], recordings: new Map(), finalized: false };
       this.sessions.set(id, s);
     }
     return s;

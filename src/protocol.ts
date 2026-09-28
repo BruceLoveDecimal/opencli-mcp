@@ -26,6 +26,8 @@ export type Action =
   | 'console'
   // atomic interaction at the runtime edge: locate → wait actionable → hit-test → real input → settle
   | 'act'
+  // record what the person does in a tab (and the popups it opens) until stopped
+  | 'record'
   // human visibility
   | 'cursor' | 'visibility' | 'ping';
 
@@ -82,6 +84,10 @@ export interface Command {
   visible?: boolean;
   /** act */
   act?: ActSpec;
+  /** record: start arms the tab, read returns events after afterSequence, stop disarms and returns every event */
+  recordOp?: 'start' | 'read' | 'stop';
+  /** record start: bring the tab to the front so the person can act in it (default true) */
+  focus?: boolean;
 }
 
 export type ActKind = 'click' | 'dblclick' | 'hover' | 'focus' | 'fill' | 'type' | 'press' | 'check' | 'uncheck' | 'select' | 'scroll' | 'upload' | 'drag';
@@ -131,6 +137,13 @@ export interface ActResult {
   timings?: { resolveMs: number; actionMs: number; settleMs: number };
   /** Playwright-generated selector for locating the same element again. */
   selector?: string;
+  /** `selector` as Playwright locator code (Playwright's asLocator), per language. */
+  locator?: { javascript: string; python: string };
+  /** the field holds a password/OTP/card number: generated code reads it from an environment variable */
+  secret?: boolean;
+  /** drag: the drop target, like selector/locator */
+  toSelector?: string;
+  toLocator?: { javascript: string; python: string };
   /** set when the action triggered a navigation that has now finished */
   navigated?: boolean;
   url?: string;
@@ -191,7 +204,21 @@ export type BrowserEvent =
 export type HostToExt = { type: 'command'; command: Command } | { type: 'ready'; version: string; port: number };
 /** Bump when the host and extension command contract changes. Package versions are independent. */
 export const PROTOCOL_REVISION = 1;
-export type BrowserFeature = 'cdp' | 'network' | 'frames' | 'dialogs' | 'console' | 'downloads' | 'viewport' | 'visibility' | 'webmcp';
+export type BrowserFeature = 'cdp' | 'network' | 'frames' | 'dialogs' | 'console' | 'downloads' | 'viewport' | 'visibility' | 'webmcp' | 'recorder';
+
+/**
+ * What a recording captured, in order. `action` is one user action reported by the page-side recorder (see
+ * shared/page-contract.ts RecordedAction); the rest are browser signals the extension observed on recorded tabs.
+ * `page` is the tab's page handle, `tabId` its Chrome id. The agent's own commands on the tab are never recorded.
+ */
+export type RecordEvent = { seq: number; tabId: number; page?: string; ts: number } & (
+  | { type: 'action'; action: import('./shared/page-contract.js').RecordedAction }
+  | { type: 'navigation'; url: string }
+  | { type: 'popup'; childTabId: number; childPage?: string; url?: string }
+  | { type: 'download'; url: string; suggestedFilename?: string }
+  | { type: 'dialog'; dialogType: string; message: string; /** set once the person answered it */ accepted?: boolean; promptText?: string }
+);
+export interface RecordStatus { recording: boolean; tabs: number[]; startedAt?: number; cursor: number; events: RecordEvent[]; hasMore?: boolean; /** why capture stopped early (e.g. the debugger was detached) */ interrupted?: string; /** oldest events dropped past the buffer cap */ dropped?: number }
 export type ExtToHost =
   | { type: 'hello'; extensionVersion: string; protocolRevision: number; features: BrowserFeature[] }
   | { type: 'result'; result: Result }

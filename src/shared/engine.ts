@@ -163,7 +163,7 @@ export async function performAct(io: ActIO, spec: ActSpec): Promise<ActResult> {
   const r = await resolve(io, spec, spec.target, timeoutMs, started);
   if (io.pointOffset) { r.x += io.pointOffset.x; r.y += io.pointOffset.y; }
   if (spec.cursor && io.cursor) await io.cursor(r.x, r.y).catch(() => {});
-  const base: ActResult = { ok: true, kind: spec.kind, ref: r.ref, matches_n: r.matches_n, visible_n: r.matches_n, match_level: 'exact', point: { x: Math.round(r.x), y: Math.round(r.y) }, method: 'cdp', hit: r.hit, tag: r.tag, waitedMs: Date.now() - started, selector: r.selector ?? undefined };
+  const base: ActResult = { ok: true, kind: spec.kind, ref: r.ref, matches_n: r.matches_n, visible_n: r.matches_n, match_level: 'exact', point: { x: Math.round(r.x), y: Math.round(r.y) }, method: 'cdp', hit: r.hit, tag: r.tag, waitedMs: Date.now() - started, selector: r.selector ?? undefined, ...(r.locator && { locator: r.locator }), ...(r.secret && { secret: true }) };
   const focus = () => io.call('focus') as Promise<string>;
   const readValue = () => io.call('readValue') as Promise<string | null>;
   const navWait = spec.kind === 'click' || spec.kind === 'dblclick' || spec.kind === 'press' ? io.waitForNavigation?.(300, timeoutMs + 12_000) : undefined;
@@ -258,7 +258,7 @@ export async function performAct(io: ActIO, spec: ActSpec): Promise<ActResult> {
       await mouse(io, 'mouseMoved', r.x, r.y); await mouse(io, 'mousePressed', r.x, r.y, 1);
       const steps = 8; for (let i = 1; i <= steps; i++) await mouse(io, 'mouseMoved', r.x + (dest.x - r.x) * i / steps, r.y + (dest.y - r.y) * i / steps);
       await mouse(io, 'mouseReleased', dest.x, dest.y, 1);
-      Object.assign(base, { to: { x: Math.round(dest.x), y: Math.round(dest.y) } });
+      Object.assign(base, { to: { x: Math.round(dest.x), y: Math.round(dest.y) }, ...(dest.selector && { toSelector: dest.selector }), ...(dest.locator && { toLocator: dest.locator }) });
       break;
     }
   }
@@ -286,7 +286,7 @@ async function performUpload(io: ActIO, spec: ActSpec): Promise<ActResult> {
     const q = await io.cdp('DOM.querySelector', { nodeId: doc.root.nodeId, selector: '[data-opencli-act]' }) as { nodeId: number };
     await io.cdp('DOM.setFileInputFiles', { files, nodeId: q.nodeId });
     const count = await io.call('fileSelectionCount') as number;
-    return { ok: true, kind: 'upload', ref: resolved.ref, matches_n: resolved.matches_n, visible_n: 0, match_level: 'exact', point: { x: 0, y: 0 }, method: 'cdp', hit: 'target', tag: 'input', waitedMs: Date.now() - started, selector: resolved.selector ?? undefined, files: count, verified: count === files.length };
+    return { ok: true, kind: 'upload', ref: resolved.ref, matches_n: resolved.matches_n, visible_n: 0, match_level: 'exact', point: { x: 0, y: 0 }, method: 'cdp', hit: 'target', tag: 'input', waitedMs: Date.now() - started, selector: resolved.selector ?? undefined, ...(resolved.locator && { locator: resolved.locator }), files: count, verified: count === files.length };
   } finally { await io.call('clearActMark').catch(() => {}); }
 }
 
@@ -298,12 +298,12 @@ async function performDomClick(io: ActIO, spec: ActSpec): Promise<ActResult> {
   if (!selector) throw new ActError('invalid_target', 'target needs an aria ref (eN), a selector, or a semantic locator (role/name/label/text/testid)');
   const timeoutMs = spec.timeoutMs ?? 3000;
   const started = Date.now();
-  const res = await io.call('domClick', { selector, fallback: fallbackSelector(spec.target) }) as { ok?: true; error?: { code: string; message: string; hint?: string; candidates?: unknown[] }; ref?: string | null; tag?: string; selector?: string | null; x?: number; y?: number; matches_n?: number };
+  const res = await io.call('domClick', { selector, fallback: fallbackSelector(spec.target) }) as { ok?: true; error?: { code: string; message: string; hint?: string; candidates?: unknown[] }; ref?: string | null; tag?: string; selector?: string | null; locator?: ActResult['locator']; x?: number; y?: number; matches_n?: number };
   if (!res || res.ok !== true) {
     const e = res?.error ?? { code: 'action_failed', message: 'DOM click failed' };
     throw new ActError(e.code, e.message, e.hint, e.candidates ? { candidates: e.candidates } : undefined);
   }
-  const base: ActResult = { ok: true, kind: 'click', ref: res.ref, matches_n: 1, visible_n: 1, match_level: 'exact', point: { x: Math.round(res.x ?? 0), y: Math.round(res.y ?? 0) }, method: 'dom', hit: 'target', tag: res.tag ?? '', waitedMs: Date.now() - started, selector: res.selector ?? undefined };
+  const base: ActResult = { ok: true, kind: 'click', ref: res.ref, matches_n: 1, visible_n: 1, match_level: 'exact', point: { x: Math.round(res.x ?? 0), y: Math.round(res.y ?? 0) }, method: 'dom', hit: 'target', tag: res.tag ?? '', waitedMs: Date.now() - started, selector: res.selector ?? undefined, ...(res.locator && { locator: res.locator }) };
   const navWait = io.waitForNavigation?.(300, timeoutMs + 12_000);
   if (navWait) { const nav = await navWait.catch(() => ({ navigated: false as const })); if (nav.navigated) Object.assign(base, { navigated: true, url: nav.url }); }
   const settleMs = spec.settleMs ?? 600;

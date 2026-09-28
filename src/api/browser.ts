@@ -9,6 +9,7 @@ import { ActionError } from './errors.js';
 import { buildInstructions, readDocForContext, type DocContext } from '../docs/manifest.js';
 import { BROWSER_CAPABILITIES } from '../docs/surface.js';
 import { Tab } from './tab.js';
+import { noteStep } from './script.js';
 import type { SessionContext } from './context.js';
 
 export class Browser {
@@ -28,6 +29,7 @@ export class Browser {
       this.ctx.state.finalized = false; // new tabs after a finalize are the session's again
       this.ctx.state.selected = id;
       const tab = new Tab(id, this.ctx, await this.ctx.rt.pageFor(this.ctx.sessionId, id));
+      noteStep(this.ctx, { kind: 'open', page: id, ...(url && { url }) });
       if (url) {
         // another extension may have taken the navigation over (interstitial, redirect to its own page): say so, do not hand out a tab the debugger cannot attach to
         const landed = await tab.url().catch(() => null);
@@ -43,6 +45,8 @@ export class Browser {
     get: (id: string): Tab => new Tab(id, this.ctx),
     selected: async (): Promise<Tab | undefined> => { const id = this.ctx.state.selected; return id ? new Tab(id, this.ctx) : undefined; },
     finalize: async (opts: { keep?: Array<{ tab: string | Tab; status: 'deliverable' | 'handoff' }> } = {}): Promise<{ closed: string[]; kept: string[]; failed: Array<{ page: string; reason: string }> }> => {
+      // a recording must not outlive the session that started it: its steps still go to the session script
+      for (const id of [...this.ctx.state.recordings.keys()]) await new Tab(id, this.ctx).recording.stop().catch(() => { this.ctx.state.recordings.delete(id); });
       const page = await this.page();
       const keep = (opts.keep ?? []).map((k) => ({ page: typeof k.tab === 'string' ? k.tab : k.tab.id, status: k.status }));
       const result = this.ctx.rt.isExtensionPage(page) ? await page.finalize(keep) : (await page.closeWindow(), { closed: [], kept: keep.map((k) => k.page), failed: [] });
@@ -61,6 +65,7 @@ export class Browser {
       const r = await page.claim(tab);
       this.ctx.state.finalized = false;
       this.ctx.state.selected = r.page;
+      noteStep(this.ctx, { kind: 'open', page: r.page, claimed: true, ...(r.url && /^https?:/i.test(r.url) && { url: r.url }) });
       return new Tab(r.page, this.ctx, await this.ctx.rt.pageFor(this.ctx.sessionId, r.page), r.tabId);
     },
     /** Close user tabs by Chrome id without claiming or loading their pages. */

@@ -27,6 +27,18 @@ opencli-mcp 是一个连接到真实 Chrome 的 MCP browser service。Chrome ext
 
 完成后调用 `session_finalize`。没有保留的 agent tab 会关闭；已接管的 user tab 会释放。需要把新 tab 留给用户时标记为 `deliverable`，需要供后续回合继续接管时标记为 `handoff`。也可用 `tab_release` 保留单个 tab，或用 `tab_close` 明确关闭。详见 [tab 生命周期](tab-lifecycle.md)。
 
+## Playwright 代码与录制
+
+每次 `tab_act` 的结果都带有 `code` 字段，即这一步对应的 Playwright 代码；通过的 `tab_expect` 也会给出断言代码，`tab_find` 的每个结果带有 `locator`。定位器由 Playwright 自己的生成器产生，基于 `tab_act` 实际命中的元素，因此代码与实际操作的元素一致。`session_export_script` 把整个 session 的打开、跳转、操作和断言导出为可直接运行的 Playwright 测试（`javascript` 为 @playwright/test，`python` 为 pytest-playwright）。
+
+用户更愿意演示而不是描述时，可以录制：`record_start` 把 tab 切到前台并开始记录用户的点击、输入、勾选、下拉选择、按键和文件选择（包括 iframe、跨域 iframe 和该 tab 打开的弹窗），以及用户自己输入的跳转、操作引起的对话框和下载。agent 自己在该 tab 上的操作不会被录入。用户说完成后调用 `record_stop`，返回：
+
+- `code`：录到的流程，作为 Playwright 测试；
+- `steps`：可以用 `tab_act` 逐条回放的步骤（`target.selector` 与 `target.frame` 原样传入）；
+- `network.afterSequence`：配合 `network_inspect` 查看流程期间的网络请求，可作为编写 Adapter 的起点。
+
+密码、验证码和银行卡字段的值不会被录制，也不会写入代码；生成的代码从 `SECRET_1`、`SECRET_2` 等环境变量读取。录制的步骤也会加入 `session_export_script`。`session_finalize` 会停止尚未结束的录制。
+
 ## Site Adapter
 
 内置 Adapter 覆盖 Twitter/X、Bilibili 和 Reddit。`sites_search` 查找命令和参数，`site_run` 直接执行；在 `js` 中可用 `sites.enable('reddit')` 暴露该站的动态工具。Adapter 与交互式 browser 操作使用同一个 `Tab` API 和当前 Chrome 登录状态。

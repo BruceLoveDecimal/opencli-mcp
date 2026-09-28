@@ -52,7 +52,7 @@ export class NativeHost {
     });
     this.status = 'connected';
     const features: BrowserFeature[] = ['frames', 'dialogs', 'console', 'downloads', 'visibility', 'webmcp'];
-    if (chrome.debugger) features.push('cdp', 'viewport', 'network');
+    if (chrome.debugger) features.push('cdp', 'viewport', 'network', 'recorder');
     this.send({ type: 'hello', extensionVersion: chrome.runtime.getManifest().version, protocolRevision: PROTOCOL_REVISION, features });
     return true;
   }

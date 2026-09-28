@@ -1,6 +1,6 @@
 # Privacy Policy for opencli-mcp
 
-Last updated: September 20, 2026
+Last updated: September 28, 2026
 
 opencli-mcp is a local browser runtime for MCP-compatible agents. It lets an agent operate the user's existing Chrome session after the user has installed and enabled the extension and started the local opencli-mcp host.
 
@@ -10,8 +10,9 @@ Depending on the browser task and the capabilities used, opencli-mcp may handle:
 
 - browser tab metadata, including URLs, titles, navigation state, and tab groups;
 - website content that the user asks the agent to inspect or operate on, including text, links, images, and page state;
-- user activity needed to perform an explicitly requested task, such as clicks, typing, scrolling, and network requests observed for debugging or site capability discovery; and
-- session cookies and related authentication data when a user-authorized site operation needs the existing logged-in browser session.
+- user activity needed to perform an explicitly requested task, such as clicks, typing, scrolling, and network requests observed for debugging or site capability discovery;
+- session cookies and related authentication data when a user-authorized site operation needs the existing logged-in browser session; and
+- when an agent starts a recording at the user's request, the user's own actions in that tab and the popups it opens (the element acted on, typed text, selected options and chosen file names) until the recording is stopped. Values of password, one-time-code and payment-card fields are not recorded: they never leave the page.
 
 opencli-mcp does not ask for, collect, or store the user's passwords. Users should not instruct an agent to expose sensitive information unnecessarily.
 

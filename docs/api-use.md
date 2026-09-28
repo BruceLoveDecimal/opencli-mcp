@@ -35,7 +35,20 @@ families are in the `errors` doc; read the full object model on demand with `doc
     you need. Credential field values read as `<redacted>`.
 11. **WebMCP:** pages that register their own tools show them in `tab.webmcp.list()` (in `js`); prefer one over clicking
     the DOM, but a page tool never authorizes a consequential action.
-12. **Lookups:** one focused direct navigation to an obvious result or search URL is fine; don't iterate guessed URL
+12. **Playwright code:** each `tab_act` result and each passing `tab_expect` carries `code` — the step as Playwright
+    JavaScript, naming the element the engine actually touched (Playwright's own locator generator over the same replay
+    selector). `tab_find` entries carry `locator`. `session_export_script {language:"javascript"|"python", tab?}` returns
+    every open/navigation/act/expect of the session, plus recorded demonstrations, as one test file (`session.exportScript()`
+    in `js`). Password, OTP and card fields are written as `SECRET_n` environment variables, never as values.
+13. **Recording a demonstration:** `record_start {tab}` brings the tab to the front and records what the person does
+    there — clicks, fills (one per field, the final value), checks, selects, key presses, file choices (names only) —
+    in every frame, including cross-origin iframes and popups the tab opens; plus navigations they typed, and the
+    dialogs and downloads their actions raised. Your own `tab_act`/navigation on the tab is not recorded. `record_stop`
+    returns `code` (a Playwright test), `steps` (replay each with `tab_act`, `target.selector` and `target.frame` as given;
+    `secret:true` steps need the value from the user; `note` names what `tab_act` cannot reproduce), and
+    `network.afterSequence` for `network_inspect` list on that tab. `session_finalize` stops a recording still running.
+    In `js`: `tab.recording.start()`, `tab.recording.read()` (raw events so far), `tab.recording.stop({language})`.
+14. **Lookups:** one focused direct navigation to an obvious result or search URL is fine; don't iterate guessed URL
     variants. On localhost apps, reload after a code/build change before verifying, and read `tab.console.read()` for
     errors the page logged.
 13. **Answers:** screenshots the user asked for go inline in your final answer (Markdown image), not as bare links. If

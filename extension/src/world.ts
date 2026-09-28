@@ -12,13 +12,13 @@ import { ENGINE_GLOBAL, PAGE_GLOBAL, installEngineJs, pageCallJs } from '../../s
 
 /** The bundled page module (extension/dist/page.js), read once from the extension package. */
 let pageModule: Promise<string> | null = null;
-function pageModuleSource(): Promise<string> {
+export function pageModuleSource(): Promise<string> {
   pageModule ??= fetch(chrome.runtime.getURL('page.js')).then((r) => r.text());
   return pageModule;
 }
 const READY = `(globalThis.${ENGINE_GLOBAL} && globalThis.${PAGE_GLOBAL})`;
 
-const WORLD_NAME = 'opencli-mcp-engine';
+export const WORLD_NAME = 'opencli-mcp-engine';
 const contexts = new Map<string, number>(); // `${tabId}:${frameId}` → engine-world executionContextId
 /** Default (main-world) execution contexts of in-process child frames, reported by Runtime on the root session. */
 const mainContexts = new Map<string, number>();

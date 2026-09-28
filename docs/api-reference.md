@@ -3,6 +3,27 @@
 In `js` the globals are `agent`, `sites`, `recon`, `tools`, `session` (the members of `AgentApi`) plus `nodeRepl` and `Tab`. This is the object-model signature reference; typed entry tools are projections of it. Site adapter definitions are documented in `define-tools`.
 
 ```ts
+interface RecordingResult {
+  tab: string; actions: number;
+  durationMs?: number; steps: ReplayStep[];
+  language: CodeLanguage; code: string; network?: { afterSequence: number; cursor: number };
+  interrupted?: string;
+  dropped?: number;
+}
+
+interface ExportedScript { language: CodeLanguage; steps: number; truncated?: true; code: string }
+
+type CodeLanguage = 'javascript' | 'python';
+
+interface ReplayStep {
+  tab: string;
+  action: 'goto' | 'click' | 'dblclick' | 'fill' | 'press' | 'select' | 'check' | 'uncheck' | 'upload';
+  url?: string; target?: { selector: string; frame?: number[] };
+  value?: string; secret?: true; files?: string[]; note?: string;
+}
+
+interface RecordStatus { recording: boolean; tabs: number[]; startedAt?: number; cursor: number; events: RecordEvent[]; hasMore?: boolean; interrupted?: string; dropped?: number }
+
 interface AgentApi {
   agent: { browsers: { getDefault(): Promise<Browser>; }; browser: Browser; documentation: { get(name: string): string | null; }; };
   sites: Record<string, unknown> & { search(q: string, limit?: number): Promise<unknown>; list(): unknown; enable(site: string, opts?: { write?: boolean; }): Promise<{ site: string; tools: Array<string>; }>; disable(site: string): boolean; run(site: string, name: string, args?: Record<string, unknown>): Promise<unknown>; };
@@ -17,7 +38,10 @@ interface AgentApi {
     list(): Array<{ site: string; name: string; file: string; }>;
     remove(site: string, name: string): Promise<boolean>;
   };
-  session: { id: string; };
+  session: {
+    id: string;
+    exportScript(opts?: { language?: CodeLanguage; tab?: string; title?: string; }): ExportedScript; // Everything this session did in the browser (open/goto/act/expect), as a Playwright test file. `tab` limits it to one tab.
+  };
 }
 
 class Browser {
@@ -63,8 +87,13 @@ class Tab {
     list(): Promise<Array<{ name: string; description?: string; inputSchema?: unknown; }>>;
     call(name: string, input?: Record<string, unknown>): Promise<unknown>;
   };
-  expect(what: Expectation, opts?: { timeoutMs?: number; }): Promise<CheckResult>; // Assert what the page must show now (polled up to timeoutMs).
+  expect(what: Expectation, opts?: { timeoutMs?: number; }): Promise<CheckResult & { code?: string; }>; // Assert what the page must show now (polled up to timeoutMs).
   evaluate(js: string, opts?: { allowWrite?: boolean; frame?: number; }): Promise<unknown>; // Read-only page evaluation.
+  recording: { // Record what the person does in this tab (and in popups it opens) while they demonstrate a flow. The agent's own actions on the tab are not recorded. stop() returns the flow as Playwright code and as tab_act-shaped replay steps, the network cursor range of the demonstration, and adds the steps to the session script.
+    start(opts?: { focus?: boolean; }): Promise<{ tab: string; recording: true; url: string | null; }>;
+    read(opts?: { afterSequence?: number; limit?: number; }): Promise<RecordStatus>; // Raw events so far (actions and browser signals), cursor-paged; the recording keeps running.
+    stop(opts?: { language?: CodeLanguage; title?: string; addToScript?: boolean; }): Promise<RecordingResult>;
+  };
   dialog: { // Native alert/confirm/prompt dialogs block the page; commands fail with `dialog_open` until answered.
     get(): Promise<DialogInfo | null>;
     accept(text?: string): Promise<DialogInfo | null>;
@@ -109,7 +138,7 @@ interface Box { x: number; y: number; w: number; h: number }
 interface FindEntry {
   nth: number;
   ref: string | null;
-  selector: string | null;
+  selector: string | null; locator?: string | null;
   tag: string; role: string; name: string; text: string;
   attrs: Record<string, string>;
   visible: boolean; enabled: boolean | null; editable: boolean | null;

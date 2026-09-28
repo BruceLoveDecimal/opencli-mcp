@@ -3,7 +3,7 @@ import type { ExtensionBridge } from '../host/bridge.js';
 import { BrowserCommandError } from '../host/bridge.js';
 import { wrapForEval, waitForDomStableJs, networkRequestsJs } from './browser-helpers.js';
 import type { RuntimePage } from './page-types.js';
-import type { Command, ActSpec, ActResult, DialogInfo, ConsoleEntry, CloseUserTabsResult, DownloadWaitResult } from '../protocol.js';
+import type { Command, ActSpec, ActResult, DialogInfo, ConsoleEntry, CloseUserTabsResult, DownloadWaitResult, RecordStatus } from '../protocol.js';
 import { pageCallJs, ActError } from '../shared/engine.js';
 import type { Expectation, CheckResult } from '../shared/page-contract.js';
 
@@ -239,6 +239,9 @@ class ExtensionPage implements ExtensionRuntimePage {
     // an action may navigate (link click, Enter in a form): the cached URL from goto is no longer trustworthy
     if (r.navigated) this._lastUrl = r.url ?? null; else if (spec.kind === 'click' || spec.kind === 'dblclick' || spec.kind === 'press') this._lastUrl = null;
     return r;
+  }
+  async record(op: 'start' | 'read' | 'stop', opts: { focus?: boolean; afterSequence?: number; limit?: number } = {}): Promise<RecordStatus> {
+    return (await this.send('record', { recordOp: op, ...(opts.focus !== undefined && { focus: opts.focus }), ...(opts.afterSequence !== undefined && { afterSequence: opts.afterSequence }), ...(opts.limit !== undefined && { limit: opts.limit }), timeoutMs: 30_000 })).data as RecordStatus;
   }
   async setVisibility(visible: boolean): Promise<void> { await this.bridge.send('visibility', { ...this.sessionOpts(), visible }); }
 

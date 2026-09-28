@@ -5,7 +5,7 @@ import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
-const entries = ['src/api/api.ts', 'src/api/browser.ts', 'src/api/tab.ts', 'src/backends/extension-page.ts', 'src/shared/page-contract.ts', 'src/protocol.ts'].map((f) => resolve(root, f));
+const entries = ['src/api/api.ts', 'src/api/browser.ts', 'src/api/tab.ts', 'src/api/script.ts', 'src/codegen/playwright.ts', 'src/codegen/recording.ts', 'src/backends/extension-page.ts', 'src/shared/page-contract.ts', 'src/protocol.ts'].map((f) => resolve(root, f));
 const program = ts.createProgram(entries, {
   target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext,
   strict: true, exactOptionalPropertyTypes: true, skipLibCheck: true, noEmit: true, lib: ['lib.es2022.d.ts', 'lib.dom.d.ts'],
@@ -48,7 +48,7 @@ function memberLines(type, indent, depth) {
 }
 const sections = [];
 const wanted = new Map([['AgentApi', 'interface'], ['Browser', 'class'], ['Tab', 'class']]);
-const aliases = ['Target', 'ActAction', 'ActOptions', 'ObserveOptions', 'ReadOptions', 'ImageValue', 'Box', 'FindEntry', 'FindResult', 'QueryFindResult', 'ElementAtResult', 'ReadTextResult', 'Expectation', 'CheckResult', 'FrameStep', 'DialogInfo', 'ConsoleEntry', 'UserTabInfo', 'CloseUserTabsResult', 'DownloadWaitResult'];
+const aliases = ['Target', 'ActAction', 'ActOptions', 'ObserveOptions', 'ReadOptions', 'ImageValue', 'Box', 'FindEntry', 'FindResult', 'QueryFindResult', 'ElementAtResult', 'ReadTextResult', 'Expectation', 'CheckResult', 'FrameStep', 'DialogInfo', 'ConsoleEntry', 'UserTabInfo', 'CloseUserTabsResult', 'DownloadWaitResult', 'CodeLanguage', 'ExportedScript', 'RecordingResult', 'ReplayStep', 'RecordStatus'];
 for (const entry of entries) { sf = program.getSourceFile(entry); ts.forEachChild(sf, (node) => {
   if ((ts.isClassDeclaration(node) || ts.isInterfaceDeclaration(node)) && node.name && wanted.has(node.name.text)) {
     const sym = checker.getSymbolAtLocation(node.name);

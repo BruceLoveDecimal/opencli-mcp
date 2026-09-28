@@ -1,5 +1,5 @@
 /** The transport surface used by the browser object API. */
-import type { ActSpec, ActResult, DialogInfo, ConsoleEntry, DownloadWaitResult } from '../protocol.js';
+import type { ActSpec, ActResult, DialogInfo, ConsoleEntry, DownloadWaitResult, RecordStatus } from '../protocol.js';
 import type { Expectation, CheckResult } from '../shared/page-contract.js';
 
 export interface ScreenshotOptions { format?: 'png' | 'jpeg'; quality?: number; fullPage?: boolean; width?: number; height?: number }
@@ -40,6 +40,8 @@ export interface RuntimePage {
   expect(what: Expectation, opts?: { timeoutMs?: number }): Promise<CheckResult>;
   /** Accessibility snapshot text for browser sessions and adapters. */
   aria(opts?: { viewport?: boolean }): Promise<string>;
+  /** Record what the person does in this tab: start arms it, read returns events after afterSequence, stop disarms and returns them all. */
+  record(op: 'start' | 'read' | 'stop', opts?: { focus?: boolean; afterSequence?: number; limit?: number }): Promise<RecordStatus>;
   /** Call one function of the page-side module (extension/src/page) in the tab's main frame world. */
   pageCall(fn: string, args?: unknown, timeoutMs?: number): Promise<unknown>;
 }

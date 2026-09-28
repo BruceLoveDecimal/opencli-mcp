@@ -11,6 +11,11 @@ import { targetToSelector, fallbackSelector } from '../shared/engine.js';
 import type { FindEntry, FindResult, QueryFindResult, ElementAtResult, Expectation, CheckResult, ReadTextResult } from '../shared/page-contract.js';
 import type { DialogInfo, DownloadWaitResult, FrameStep } from '../protocol.js';
 import type { SessionContext } from './context.js';
+import { actStep, codeOf, noteStep } from './script.js';
+import { renderScript, type CodeLanguage } from '../codegen/playwright.js';
+import { recordingSteps, replaySteps, type ReplayStep } from '../codegen/recording.js';
+import type { RecordStatus } from '../protocol.js';
+import type { LocatorInfo } from '../shared/page-contract.js';
 
 export type Target = ({ frame?: FrameStep | FrameStep[]; /** container (css/selector/eN) to resolve inside */ within?: string }) & (
   | { ref: number | string }
@@ -27,6 +32,22 @@ export interface ObserveOptions { mode?: 'state' | 'screenshot' | 'both'; /** Re
 export interface ReadOptions { /** stop after this many characters. Default 60000. */ maxChars?: number; /** character offset returned as nextStart by a previous read */ start?: number; /** capture id returned by that same read */ readId?: string }
 
 export interface ImageValue { __image: true; mimeType: string; base64: string }
+
+export interface RecordingResult {
+  tab: string;
+  /** user actions captured (before merging keystrokes into fills) */
+  actions: number;
+  durationMs?: number;
+  /** the flow as tab_act-shaped steps: target.selector replays through the same engine */
+  steps: ReplayStep[];
+  language: CodeLanguage;
+  /** the flow as a Playwright test */
+  code: string;
+  /** requests made during the demonstration: network_inspect list with afterSequence on this tab */
+  network?: { afterSequence: number; cursor: number };
+  interrupted?: string;
+  dropped?: number;
+}
 
 
 
@@ -59,6 +80,7 @@ export class Tab {
     if (!/^(https?:\/\/|data:text\/html)/i.test(url)) throw new ActionError('invalid_url', 'Only http(s) (or data:text/html) URLs can be opened', 'Pass an absolute http:// or https:// URL');
     return this.use(async (page) => {
       await page.goto(url, opts);
+      noteStep(this.ctx, { kind: 'goto', page: this.id, url });
       await this.harvest(page);
       return this.info(page);
     });
@@ -96,11 +118,11 @@ export class Tab {
   }
   async url(): Promise<string | null> { return this.use((p) => p.getCurrentUrl()); }
   async title(): Promise<string | null> { return this.use((p) => p.evaluate<string>('document.title')); }
-  async back(): Promise<void> { await this.use((p) => p.history('back')); }
-  async forward(): Promise<void> { await this.use((p) => p.history('forward')); }
-  async reload(): Promise<void> { await this.use((p) => p.history('reload')); }
+  async back(): Promise<void> { await this.use((p) => p.history('back')); noteStep(this.ctx, { kind: 'history', page: this.id, op: 'back' }); }
+  async forward(): Promise<void> { await this.use((p) => p.history('forward')); noteStep(this.ctx, { kind: 'history', page: this.id, op: 'forward' }); }
+  async reload(): Promise<void> { await this.use((p) => p.history('reload')); noteStep(this.ctx, { kind: 'history', page: this.id, op: 'reload' }); }
   /** Close this tab, whether it was opened or claimed by this session. */
-  async close(): Promise<void> { await this.use((p) => p.closeTab(this.id)); this.closed = true; this.ctx.rt.forgetPage(this.ctx.sessionId, this.id); }
+  async close(): Promise<void> { await this.use((p) => p.closeTab(this.id)); this.closed = true; this.ctx.rt.forgetPage(this.ctx.sessionId, this.id); noteStep(this.ctx, { kind: 'close', page: this.id }); }
   /** Keep this tab open and give up this session's control of it. */
   async release(): Promise<void> { await this.use((p) => p.releaseTab(this.id)); this.closed = true; this.ctx.rt.forgetPage(this.ctx.sessionId, this.id); }
 
@@ -183,8 +205,10 @@ export class Tab {
         // use the page already held by this.use(): calling this.reload()/back()/forward() here would re-enter the session lock and deadlock
         if (action === 'back' || action === 'forward' || action === 'reload') {
           const h = await page.history(action);
+          const step = { kind: 'history' as const, page: this.id, op: action };
+          noteStep(this.ctx, step);
           if (capture) await this.harvest(page);
-          return { action, ...h, delivery: 'applied', controlState: 'unverified', ...(capture && { network: { afterSequence: networkFrom, cursor: this.ctx.state.netLog.get(this.id)?.seq ?? networkFrom } }) };
+          return { action, ...h, delivery: 'applied', controlState: 'unverified', ...(capture && { network: { afterSequence: networkFrom, cursor: this.ctx.state.netLog.get(this.id)?.seq ?? networkFrom } }), code: codeOf(step) };
         }
         if (action === 'scroll' && !opts.target) {
           // no target: wheel at the viewport centre
@@ -195,6 +219,8 @@ export class Tab {
         const r = await page.act({ kind: action, target: opts.target as Record<string, unknown>, value: opts.value, files: opts.files, to: opts.to as Record<string, unknown> | undefined, direction: opts.direction, amount: opts.amount, timeoutMs: opts.timeoutMs, settleMs: opts.settleMs ?? 600, cursor: this.ctx.rt.cursorEnabled, ...(opts.method ? { method: opts.method } : {}) });
         if (capture) await this.harvest(page);
         const delivery = r.method === 'dom' || ['fill', 'check', 'uncheck', 'select', 'upload', 'focus'].includes(action) ? 'applied' : action === 'click' || action === 'dblclick' ? 'received' : 'dispatched';
+        const step = actStep(this.id, opts, r);
+        if (step) noteStep(this.ctx, step);
         const controlVerified = r.verified === true || (action === 'check' && r.checked === true) || (action === 'uncheck' && r.checked === false) || (action === 'select' && Array.isArray(r.selected) && r.selected.length > 0);
         // Return the outcome and the fields needed to choose the next action.
         return {
@@ -212,6 +238,7 @@ export class Tab {
           ...(r.openedTabs?.length ? { openedTabs: r.openedTabs.map(({ page, tabId, url, title, pending }) => ({ ...(page && { tab: page }), tabId, url, title, ...(pending && { pending }) })) } : {}),
           ...(r.download ? { download: r.download } : {}),
           ...(action === 'click' && r.method === 'dom' ? { method: 'dom' as const } : {}),
+          ...(step && { code: codeOf(step) }),
         };
       } catch (err) {
         if (err instanceof ActionError) throw err;
@@ -233,10 +260,18 @@ export class Tab {
   };
 
   /** Assert what the page must show now (polled up to timeoutMs). */
-  async expect(what: Expectation, opts: { timeoutMs?: number } = {}): Promise<CheckResult> {
+  async expect(what: Expectation, opts: { timeoutMs?: number } = {}): Promise<CheckResult & { code?: string }> {
     return this.use(async (page) => {
-      try { return await page.expect(what, opts); }
+      let result: CheckResult;
+      try { result = await page.expect(what, opts); }
       catch (err) { const e = err as { code?: string; message?: string; hint?: string; extra?: Record<string, unknown> }; throw new ActionError(e.code ?? 'expectation_failed', e.message ?? String(err), e.hint, e.extra); }
+      // an assertion that held is a step of the script too; the element is named the way act names it
+      const selector = what.selector ?? (what.ref ? `aria-ref=${what.ref}` : undefined);
+      const located = selector ? await page.pageCall('locatorFor', { selector }).catch(() => null) as LocatorInfo | null : null;
+      const target = selector ? (located ? { locator: located.locator, selector: located.selector } : selector.startsWith('aria-ref=') ? undefined : { selector }) : undefined;
+      const step = { kind: 'expect' as const, page: this.id, ...(what.text !== undefined && { text: what.text }), ...(what.notText !== undefined && { notText: what.notText }), ...(what.url !== undefined && { url: what.url }), ...(what.title !== undefined && { title: what.title }), ...(target && { target, ...(what.visible !== undefined && { visible: what.visible }) }) };
+      noteStep(this.ctx, step);
+      return { ...result, code: codeOf(step) };
     });
   }
 
@@ -247,6 +282,46 @@ export class Tab {
       return opts.frame !== undefined ? page.evaluateInFrame(js, opts.frame) : page.evaluate(js);
     });
   }
+
+  /**
+   * Record what the person does in this tab (and in popups it opens) while they demonstrate a flow. The agent's own
+   * actions on the tab are not recorded. stop() returns the flow as Playwright code and as tab_act-shaped replay steps,
+   * the network cursor range of the demonstration, and adds the steps to the session script.
+   */
+  readonly recording = {
+    start: async (opts: { focus?: boolean } = {}): Promise<{ tab: string; recording: true; url: string | null }> => this.use(async (page) => {
+      if (!this.ctx.rt.hasFeature('recorder')) throw new ActionError('capability_unavailable', 'The connected extension does not advertise the recorder.', 'Run doctor and update the Chrome extension.');
+      const capture = this.ctx.rt.hasFeature('network');
+      if (capture) await this.harvest(page);
+      const url = await page.getCurrentUrl().catch(() => null);
+      await page.record('start', { focus: opts.focus ?? true });
+      this.ctx.state.recordings.set(this.id, { startedAt: Date.now(), ...(url && { url }), networkFrom: this.ctx.state.netLog.get(this.id)?.seq ?? 0 });
+      return { tab: this.id, recording: true as const, url };
+    }),
+    /** Raw events so far (actions and browser signals), cursor-paged; the recording keeps running. */
+    read: async (opts: { afterSequence?: number; limit?: number } = {}): Promise<RecordStatus> => this.use((p) => p.record('read', opts)),
+    stop: async (opts: { language?: CodeLanguage; title?: string; addToScript?: boolean } = {}): Promise<RecordingResult> => this.use(async (page) => {
+      const status = await page.record('stop');
+      const meta = this.ctx.state.recordings.get(this.id);
+      this.ctx.state.recordings.delete(this.id);
+      const capture = this.ctx.rt.hasFeature('network');
+      if (capture) await this.harvest(page);
+      const steps = recordingSteps(status.events, { page: this.id, url: meta?.url });
+      if (opts.addToScript !== false) {
+        // the session script already opened this tab when the agent did: continue from where it is
+        const opened = this.ctx.state.script.some((s) => s.page === this.id);
+        for (const step of opened && steps[0]?.kind === 'open' ? steps.slice(1) : steps) noteStep(this.ctx, step);
+      }
+      const language = opts.language ?? 'javascript';
+      const actions = status.events.filter((e) => e.type === 'action').length;
+      return {
+        tab: this.id, actions, ...(meta && { durationMs: Date.now() - meta.startedAt }),
+        steps: replaySteps(steps), language, code: renderScript(steps, language, { title: opts.title ?? 'recorded flow' }),
+        ...(capture && meta && { network: { afterSequence: meta.networkFrom, cursor: this.ctx.state.netLog.get(this.id)?.seq ?? meta.networkFrom } }),
+        ...(status.interrupted && { interrupted: status.interrupted }), ...(status.dropped && { dropped: status.dropped }),
+      };
+    }),
+  };
 
   /** Native alert/confirm/prompt dialogs block the page; commands fail with `dialog_open` until answered. */
   readonly dialog = {
