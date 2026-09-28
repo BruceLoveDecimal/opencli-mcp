@@ -25,6 +25,12 @@ await build({
   bundle: true, format: 'iife', target: 'chrome120', platform: 'browser',
   outfile: resolve(out, 'page.js'), sourcemap: false, logLevel: 'warning',
 });
+// The CDP backend: the same page engine run in Node against a CDP endpoint (see extension/src/node/backend.ts)
+await build({
+  entryPoints: [resolve(ext, 'src/node/backend.ts')],
+  bundle: true, format: 'esm', target: 'node22', platform: 'node',
+  outfile: resolve(out, 'cdp-backend.js'), sourcemap: false, logLevel: 'warning',
+});
 // The extension carries its OWN version (extension/manifest.json), decoupled from the host/npm package version — it is
 // bumped and re-released only when the extension itself changes. The build copies it through unchanged.
 const manifest = JSON.parse(readFileSync(resolve(ext, 'manifest.json'), 'utf8'));

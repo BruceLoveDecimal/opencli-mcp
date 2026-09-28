@@ -81,7 +81,8 @@ class Tab {
   };
   cookies(domain: string): Promise<Array<unknown>>;
   cookie(name: string, opts?: { domain?: string; }): Promise<string | undefined>; // Read one cookie's value at run time — useful for per-request tokens an adapter needs (csrf/ct0/ csrftoken/XSRF-TOKEN). Defaults to the current page's host. Returns undefined when the cookie is absent.
-  fetchJson(url: string, opts?: Record<string, unknown>): Promise<unknown>; // Fetch JSON through the page (its cookies and origin) after verifying the endpoint.
+  request(opts: PageRequestOptions): Promise<PageResponse | { ready: true; origin: string; }>; // Send an HTTP request from this page with its login session (storage values filled into `${name}`, secrets masked). Without `request`, only checks the values resolve.
+  fetchJson(url: string, opts?: Record<string, unknown>): Promise<unknown>;
   frames(): Promise<Array<{ index: number; frameId: string; url: string; name: string; crossOrigin?: boolean; oopif?: boolean; }>>;
   download(afterSequence: number, timeoutMs?: number): Promise<DownloadWaitResult>; // Wait for the page download begun after a tab_act cursor, then check Chrome's file state.
 }

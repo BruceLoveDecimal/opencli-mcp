@@ -14,7 +14,7 @@ opencli-mcp lets MCP clients observe and operate your Chrome tabs through a loca
 ## What you can do
 
 - **Work with logged-in websites.** Search, read pages, fill forms, and navigate through your existing browser session.
-- **Use optional site commands.** Discover built-in adapters for Twitter/X, Bilibili, and Reddit when a site-specific command helps.
+- **Use optional site commands.** Discover built-in adapters for Twitter/X, Bilibili, Reddit, and DreamFace when a site-specific command helps.
 - **Add site adapters.** Inspect a site's requests, verify an API, and define an explicit reusable MCP tool.
 - **Keep browser work organized.** Agent-created tabs live in named groups and are cleaned up after use. Tabs borrowed from the user are never closed by session cleanup.
 
@@ -112,6 +112,8 @@ Each MCP client connection has its own tab and JavaScript session, so one client
 The MCP launcher can start before Chrome. It keeps the client connection open and reconnects when the Chrome-owned host appears or restarts. Browser operations and site adapters use that host; run `opencli-mcp doctor` if it stays unavailable.
 
 The host also supports Streamable HTTP for remote clients. See [remote access and configuration](docs/setup.md#remote-clients).
+
+To drive a browser the agent owns instead of your Chrome, such as a headless Chrome for a test run or an app's embedded view, run `opencli-mcp cdp --endpoint <url>`. It uses the same page engine without the extension. See [CDP endpoint](docs/setup.md#a-browser-you-own-cdp-endpoint).
 
 ## Browser access and permissions
 
