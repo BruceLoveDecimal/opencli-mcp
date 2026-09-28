@@ -3,6 +3,7 @@
  * opencli-mcp — entry point.
  *   opencli-mcp                 stdio MCP (proxies to the Chrome-spawned host)
  *   opencli-mcp host            the Native Messaging host (spawned by Chrome; do not run by hand)
+ *   opencli-mcp cdp --endpoint  stdio MCP over a CDP endpoint (headless Chrome, an app's embedded view) instead of the extension
  *   opencli-mcp setup           register browser + MCP clients, guide Web Store installation, verify connection
  *   opencli-mcp uninstall
  *   opencli-mcp doctor
@@ -40,6 +41,12 @@ Setup options:
 
 Advanced:
   stdio                 Run the MCP server (default when launched by a client)
+  cdp --endpoint <url>  Run the MCP server on a CDP endpoint instead of the extension:
+                        http(s)://host:port or ws(s)://…/devtools/browser/… (a browser),
+                        any other ws(s):// URL (a single page, e.g. an embedded view)
+  cdp --launch          Same, on a headless Chrome of its own (throwaway profile, closed on exit)
+    --chrome <path>     Chrome binary for --launch (default: CHROME_PATH or a usual install)
+    --allow-origin <o>  Only let pages navigate to these origins (comma-separated)
   extension-path        Print the unpacked extension directory for development
   uninstall             Remove browser host registration (keeps MCP client settings)
 `;
@@ -51,6 +58,13 @@ async function main(): Promise<void> {
     case 'stdio': {
       const { runStdio } = await import('./launcher/stdio.js');
       await runStdio({ version: VERSION });
+      return;
+    }
+    case 'cdp': {
+      const { values } = parseArgs({ args: argv.slice(1), options: { endpoint: { type: 'string' }, launch: { type: 'boolean' }, chrome: { type: 'string' }, 'allow-origin': { type: 'string' } } });
+      if (Boolean(values.endpoint) === Boolean(values.launch)) { process.stderr.write('cdp needs --endpoint <url> or --launch\n'); process.exitCode = 2; return; }
+      const { runCdp } = await import('./launcher/cdp.js');
+      await runCdp({ version: VERSION, endpoint: values.endpoint, launch: values.launch ? { chrome: values.chrome } : undefined, allowedOrigins: values['allow-origin']?.split(',').filter(Boolean) });
       return;
     }
     case 'host': {

@@ -1,5 +1,5 @@
 /** The page transport over the extension bridge; interactions use the shared act engine. */
-import type { ExtensionBridge } from '../host/bridge.js';
+import type { BrowserBridge } from '../host/bridge.js';
 import { BrowserCommandError } from '../host/bridge.js';
 import { wrapForEval, waitForDomStableJs, networkRequestsJs } from './browser-helpers.js';
 import type { RuntimePage } from './page-types.js';
@@ -48,7 +48,7 @@ function isStalePageIdentityError(err: unknown): boolean {
 class ExtensionPage implements ExtensionRuntimePage {
   readonly session: string;
   readonly surface: 'browser' | 'adapter';
-  private readonly bridge: ExtensionBridge;
+  private readonly bridge: BrowserBridge;
   private readonly opts: ExtensionPageOptions;
   private _page: string | undefined;
   private _lastUrl: string | null = null;
@@ -56,7 +56,7 @@ class ExtensionPage implements ExtensionRuntimePage {
   private readonly bound: boolean;
   private closed = false;
 
-  constructor(bridge: ExtensionBridge, opts: ExtensionPageOptions) {
+  constructor(bridge: BrowserBridge, opts: ExtensionPageOptions) {
     this.bridge = bridge;
     this.opts = opts;
     this.session = opts.session;
@@ -259,6 +259,6 @@ class ExtensionPage implements ExtensionRuntimePage {
   async getVisibility(): Promise<boolean> { const r = await this.bridge.send('visibility', { ...this.sessionOpts() }); return Boolean((r.data as { visible?: boolean } | undefined)?.visible); }
 }
 
-export async function createExtensionPage(bridge: ExtensionBridge, opts: ExtensionPageOptions): Promise<ExtensionRuntimePage> {
+export async function createExtensionPage(bridge: BrowserBridge, opts: ExtensionPageOptions): Promise<ExtensionRuntimePage> {
   return new ExtensionPage(bridge, opts);
 }

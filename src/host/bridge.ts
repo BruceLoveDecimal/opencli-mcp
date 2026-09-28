@@ -23,7 +23,17 @@ export interface BridgeEvents {
   close: [];
 }
 
-export class ExtensionBridge extends EventEmitter<BridgeEvents> {
+/** What the runtime needs from a browser backend: the extension over Native Messaging, or a CDP endpoint (cdp-bridge.ts). */
+export interface BrowserBridge extends EventEmitter<BridgeEvents> {
+  readonly connected: boolean;
+  readonly compatible: boolean;
+  readonly extensionVersion: string | null;
+  readonly protocolRevision: number | null;
+  readonly extensionFeatures: BrowserFeature[];
+  send(action: Action, params?: Omit<Command, 'id' | 'action'>, opts?: { timeoutMs?: number }): Promise<{ data: unknown; page?: string }>;
+}
+
+export class ExtensionBridge extends EventEmitter<BridgeEvents> implements BrowserBridge {
   private readonly pending = new Map<string, Pending>();
   extensionVersion: string | null = null;
   protocolRevision: number | null = null;

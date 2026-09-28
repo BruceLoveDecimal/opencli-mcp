@@ -3,7 +3,7 @@
  * Lives inside the Chrome-spawned host. The stdio launcher proxies to this runtime.
  */
 import { EventEmitter } from 'node:events';
-import type { ExtensionBridge } from '../host/bridge.js';
+import type { BrowserBridge } from '../host/bridge.js';
 import type { BrowserEvent } from '../protocol.js';
 import { PROTOCOL_REVISION, type BrowserFeature } from '../protocol.js';
 import { SiteRegistry, type AdapterCommand } from '../sites/loader.js';
@@ -20,7 +20,7 @@ import { Tab, createAgentApi, type AgentApi } from '../api/agent.js';
 export type Backend = 'extension' | 'none';
 
 export interface RuntimeOptions {
-  bridge?: ExtensionBridge | null;
+  bridge?: BrowserBridge | null;
   sites?: string[];
   sitesWrite?: string[];
   cursor?: boolean;
@@ -73,7 +73,7 @@ export class Runtime extends EventEmitter<RuntimeEvents> implements PageProvider
   private readonly adapterRuns = new Map<string, Promise<void>>();
   private readonly adapterCallContext = new AsyncLocalStorage<{ sites: Set<string>; retired: boolean }>();
   private readonly siteApis = new Map<string, AgentApi>();
-  bridge: ExtensionBridge | null;
+  bridge: BrowserBridge | null;
   readonly cursorEnabled: boolean;
   readonly configSites: string[];
   readonly configSitesWrite: string[];
