@@ -74,5 +74,8 @@
       "types": "./adapter-sdk/index.d.ts",
       "default": "./adapter-sdk/index.js"
     }
+  },
+  "opencliMcp": {
+    "adapterApi": 1
   }
 }
