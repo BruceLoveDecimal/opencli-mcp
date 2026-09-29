@@ -1,4 +1,7 @@
-/** Where adapters live: the built-in corpus (ships with the package) and the user's writable, overriding source. */
+/**
+ * Where adapters live: the built-in corpus (ships with the package), managed dirs an embedding application keeps up to
+ * date (OPENCLI_MCP_ADAPTER_DIRS), and the user's writable source. Later sources override earlier ones.
+ */
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -22,7 +25,20 @@ function findBuiltinAdapters(): string {
 export const BUILTIN_ADAPTERS_DIR = findBuiltinAdapters();
 export const USER_ADAPTERS_DIR = path.join(os.homedir(), '.opencli-mcp', 'adapters');
 
+/**
+ * Managed adapter dirs, `path.delimiter`-separated in OPENCLI_MCP_ADAPTER_DIRS: e.g. adapters an application syncs from
+ * a newer release than the one it bundles. Each must be usable against this engine; the application checks
+ * `opencliMcp.adapterApi` in package.json before pointing here.
+ */
+export function managedAdapterDirs(env: NodeJS.ProcessEnv = process.env): string[] {
+  return (env.OPENCLI_MCP_ADAPTER_DIRS ?? '').split(path.delimiter).map((d) => d.trim()).filter(Boolean).map((d) => path.resolve(d));
+}
+
 /** Ordered sources; a later one overrides an earlier one for the same `<site>/<command>`. */
-export function defaultSources(): Source[] {
-  return [{ dir: BUILTIN_ADAPTERS_DIR, kind: 'builtin' }, { dir: USER_ADAPTERS_DIR, kind: 'user' }];
+export function defaultSources(env: NodeJS.ProcessEnv = process.env): Source[] {
+  return [
+    { dir: BUILTIN_ADAPTERS_DIR, kind: 'builtin' },
+    ...managedAdapterDirs(env).map((dir): Source => ({ dir, kind: 'managed' })),
+    { dir: USER_ADAPTERS_DIR, kind: 'user' },
+  ];
 }

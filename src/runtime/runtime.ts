@@ -9,9 +9,9 @@ import { PROTOCOL_REVISION, type BrowserFeature } from '../protocol.js';
 import { SiteRegistry, type AdapterCommand } from '../sites/loader.js';
 import { runAdapter, type CommandRunResult, type CommandRunError, type PageProvider } from '../sites/executor.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { listDefinedTools, ensureUserSource, deleteTool, type ToolDefinition } from '../sites/define.js';
+import { listDefinedTools, ensureUserSource, ensureManagedSource, deleteTool, type ToolDefinition } from '../sites/define.js';
 import { createDraft, tryDraft, activateDraft, discardDraft, type DraftExpectation } from '../sites/drafts.js';
-import { defaultSources } from '../lib/sources.js';
+import { defaultSources, managedAdapterDirs } from '../lib/sources.js';
 import { createExtensionPage, type ExtensionRuntimePage } from '../backends/extension-page.js';
 import type { RuntimePage } from '../backends/page-types.js';
 import { JsSession } from '../mcp/js-session.js';
@@ -92,6 +92,9 @@ export class Runtime extends EventEmitter<RuntimeEvents> implements PageProvider
   }
 
   async init(): Promise<void> {
+    for (const dir of managedAdapterDirs()) {
+      try { ensureManagedSource(dir); } catch (err) { this.emit('log', `managed adapter dir ${dir} unavailable: ${(err as Error).message}`); }
+    }
     await this.registry.load();
     try { ensureUserSource(); } catch (err) { this.emit('log', `user adapter dir unavailable: ${(err as Error).message}`); }
   }

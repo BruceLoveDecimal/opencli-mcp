@@ -36,10 +36,11 @@ export function validateDefinition(def: ToolDefinition): void {
   try { new Function(`return (${def.func});`); } catch (err) { throw Object.assign(new Error(`func does not parse: ${(err as Error).message}`), { code: 'invalid_definition' }); }
 }
 
-/** Ensure the user source dir can resolve the SDK subpath of this opencli-mcp installation. */
-export function ensureUserSource(): string {
-  fs.mkdirSync(USER_ADAPTERS_DIR, { recursive: true });
-  const home = path.dirname(USER_ADAPTERS_DIR); // ~/.opencli-mcp
+/**
+ * Make `import 'opencli-mcp/adapter-sdk'` in adapters under `home` resolve to this installation: link
+ * `<home>/node_modules/opencli-mcp` to the running package and mark `<home>` as an ES module scope.
+ */
+export function linkSdk(home: string): void {
   const nodeModules = path.join(home, 'node_modules');
   fs.mkdirSync(nodeModules, { recursive: true });
   const link = path.join(nodeModules, 'opencli-mcp');
@@ -54,8 +55,19 @@ export function ensureUserSource(): string {
     fs.symlinkSync(packageDir, link, 'dir');
   }
   const pkg = path.join(home, 'package.json');
-  if (!fs.existsSync(pkg)) fs.writeFileSync(pkg, JSON.stringify({ name: 'opencli-mcp-user-adapters', private: true, type: 'module' }, null, 2));
+  if (!fs.existsSync(pkg)) fs.writeFileSync(pkg, JSON.stringify({ name: 'opencli-mcp-adapters', private: true, type: 'module' }, null, 2));
+}
+
+/** Ensure the user source dir can resolve the SDK subpath of this opencli-mcp installation. */
+export function ensureUserSource(): string {
+  fs.mkdirSync(USER_ADAPTERS_DIR, { recursive: true });
+  linkSdk(path.dirname(USER_ADAPTERS_DIR)); // ~/.opencli-mcp
   return USER_ADAPTERS_DIR;
+}
+
+/** A managed source (OPENCLI_MCP_ADAPTER_DIRS) is self-contained: the SDK link lives inside it, next to the sites. */
+export function ensureManagedSource(dir: string): void {
+  if (fs.existsSync(dir)) linkSdk(dir);
 }
 
 export function renderAdapterModule(def: ToolDefinition): string {

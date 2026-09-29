@@ -13,7 +13,7 @@ import { pathToFileURL } from 'node:url';
 import { defineAdapter, type AdapterDescriptor } from 'opencli-mcp/adapter-sdk';
 import { argSpec, validateArgDefinitions, type Arg, type ArgView } from './schema.js';
 
-export type SourceKind = 'builtin' | 'user';
+export type SourceKind = 'builtin' | 'managed' | 'user';
 
 export interface Source { dir: string; kind: SourceKind }
 
@@ -98,7 +98,7 @@ export class SiteRegistry {
   }
 
   private siteDirs(dir: string): string[] {
-    try { return fs.readdirSync(dir).filter((d) => { try { return fs.statSync(path.join(dir, d)).isDirectory() && !d.startsWith('.'); } catch { return false; } }); }
+    try { return fs.readdirSync(dir).filter((d) => { try { return fs.statSync(path.join(dir, d)).isDirectory() && !d.startsWith('.') && d !== 'node_modules'; } catch { return false; } }); }
     catch { return []; }
   }
 
