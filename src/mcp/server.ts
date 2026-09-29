@@ -114,6 +114,16 @@ export function createMcpServer(rt: Runtime, sessionId: string, opts: { version?
     const { data, images } = stripImage({ tab: tab.id, ...(await tab.observe()) });
     return ok(data, images);
   }));
+  server.registerTool('tab_goto', { title: 'Navigate a tab', description: 'Load a URL in an existing session tab and return the new page state (observe:false returns only url and title). Use tab_open for a new tab.',
+    inputSchema: { tab: z.string().optional().describe('required when the session has more than one tab'), url: z.string().describe('http(s) URL'), observe: z.boolean().default(true) },
+    annotations: { openWorldHint: true },
+  }, async ({ tab, url, observe }) => run(async () => {
+    const t = await tabOf(tab);
+    const page = await t.goto(url);
+    if (!observe) return ok({ tab: t.id, ...page });
+    const { data, images } = stripImage({ tab: t.id, ...(await t.observe()) });
+    return ok(data, images);
+  }));
   server.registerTool('tab_claim', { title: 'Claim a user tab', description: 'Claim active:true, a tabId from tab_list, or a unique fuzzy url/title lookup. For a specific tab mentioned by the user, pass exact expectedUrl/expectedTitle from its current listing; changed identity fails instead of claiming another tab. Returns page handle and numeric tabId. Claimed user tabs are released by session_finalize.',
     inputSchema: { tabId: z.number().int().positive().optional(), active: z.boolean().optional().describe('foreground tab of the last focused normal Chrome window'), title: z.string().optional().describe('fuzzy lookup only; omit with tabId or active'), url: z.string().optional().describe('fuzzy lookup only; omit with tabId or active'), expectedTitle: z.string().optional().describe('exact title guard for the selected tab'), expectedUrl: z.string().optional().describe('exact URL guard for the selected tab'), observe: z.boolean().default(true) },
     annotations: { openWorldHint: true },
@@ -170,8 +180,36 @@ export function createMcpServer(rt: Runtime, sessionId: string, opts: { version?
     return ok({ tab: t.id, ...(await t.download(afterSequence, timeoutMs)) });
   }));
   if (!rt.hasFeature('downloads')) downloadTool.disable();
+  const consoleTool = server.registerTool('console_read', { title: 'Read console messages', description: 'Console messages the tab logged since capture started (when the tab was attached), oldest first. Pass cursor from the previous result as afterSequence to read only newer ones.',
+    inputSchema: { tab: z.string().optional().describe('required when the session has more than one tab'), levels: z.array(z.enum(['debug', 'info', 'log', 'warn', 'error'])).optional().describe('default: every level'), filter: z.string().optional().describe('substring of the message'), afterSequence: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(500).default(100) }, annotations: { readOnlyHint: true },
+  }, async ({ tab, levels, filter, afterSequence, limit }) => run(async () => {
+    const t = await tabOf(tab);
+    return ok({ tab: t.id, ...(await t.console.read({ levels, filter, afterSequence, limit })) });
+  }));
+  if (!rt.hasFeature('console')) consoleTool.disable();
+  server.registerTool('page_request', { title: 'Request with the page session', description: 'Send one HTTP request from the tab\'s page with its cookies and login session, as the page\'s own code would. values names where session values live in the page (localStorage:<key>, localStorage:<key>#<field>, sessionStorage:<key>, cookie:<name>); write ${name} in path, query, headers or body to use them. Values named in secrets are masked (******) in the returned text and url and never leave the page. Without path, only checks every value resolves. session_missing means the page is not logged in; request_failed means no attempt got a response. HTTP error statuses are ordinary results.',
+    inputSchema: {
+      tab: z.string().optional().describe('required when the session has more than one tab'),
+      values: z.record(z.string(), z.string()).default({}),
+      secrets: z.array(z.string()).default([]),
+      method: z.string().default('GET'),
+      path: z.string().optional().describe('path or URL, resolved against the page origin'),
+      query: z.record(z.string(), z.unknown()).optional(),
+      headers: z.record(z.string(), z.string()).optional(),
+      body: z.unknown().optional().describe('sent as JSON'),
+      timeoutMs: z.number().int().min(100).max(600_000).default(30_000).describe('per attempt'),
+      attempts: z.number().int().min(1).max(5).default(1).describe('502/503/504 and network errors are retried'),
+      maxChars: z.number().int().min(200).max(1_000_000).default(200_000),
+    },
+    annotations: { destructiveHint: true, openWorldHint: true },
+  }, async ({ tab, values, secrets, method, path, query, headers, body, timeoutMs, attempts, maxChars }) => run(async () => {
+    const t = await tabOf(tab);
+    const request = path === undefined ? undefined : { method, path, ...(query && { query }), ...(headers && { headers }), ...(body !== undefined && { body }) };
+    return ok({ tab: t.id, ...(await t.request({ values, secrets, request, timeoutMs, attempts, maxChars })) });
+  }));
   const onFeaturesChanged = (): void => {
     if (networkTool.enabled !== rt.hasFeature('network')) networkTool.update({ enabled: rt.hasFeature('network') });
+    if (consoleTool.enabled !== rt.hasFeature('console')) consoleTool.update({ enabled: rt.hasFeature('console') });
     if (downloadTool.enabled !== rt.hasFeature('downloads')) downloadTool.update({ enabled: rt.hasFeature('downloads') });
     if (server.isConnected()) server.sendResourceListChanged();
   };

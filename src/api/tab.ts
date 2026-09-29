@@ -11,6 +11,7 @@ import { targetToSelector, fallbackSelector } from '../shared/engine.js';
 import type { FindEntry, FindResult, QueryFindResult, ElementAtResult, Expectation, CheckResult, ReadTextResult } from '../shared/page-contract.js';
 import type { DialogInfo, DownloadWaitResult, FrameStep } from '../protocol.js';
 import type { SessionContext } from './context.js';
+import { pageRequest, type PageRequestOptions, type PageResponse } from './page-request.js';
 
 export type Target = ({ frame?: FrameStep | FrameStep[]; /** container (css/selector/eN) to resolve inside */ within?: string }) & (
   | { ref: number | string }
@@ -302,6 +303,8 @@ export class Tab {
     return list.find((c) => c?.name === name)?.value;
   }
   /** Fetch JSON through the page (its cookies and origin) after verifying the endpoint. */
+  /** Send an HTTP request from this page with its login session (storage values filled into `${name}`, secrets masked). Without `request`, only checks the values resolve. */
+  async request(opts: PageRequestOptions): Promise<PageResponse | { ready: true; origin: string }> { return this.use((p) => pageRequest(p, opts)); }
   async fetchJson(url: string, opts: Record<string, unknown> = {}): Promise<unknown> { return this.use((p) => p.fetchJson(url, opts as never)); }
   async frames(): Promise<Array<{ index: number; frameId: string; url: string; name: string; crossOrigin?: boolean; oopif?: boolean }>> { return this.use((p) => p.frames()); }
   /** Wait for the page download begun after a tab_act cursor, then check Chrome's file state. */

@@ -53,6 +53,22 @@ registerHost({ launch: { kind: 'executable', path: '/absolute/path/to/signed-hel
 
 The helper must implement the Native Messaging protocol on stdin/stdout and run the opencli-mcp `host` entrypoint. For another host runtime, pass `{ kind: 'command', command: '/absolute/path/to/runtime', args: ['/absolute/path/to/main.js', 'host'], env: { KEY: 'value' } }`. The library serializes that command into a launcher and writes the manifest for the selected browsers and profiles. An executable path must exist and be absolute.
 
+## A browser you own (CDP endpoint)
+
+`opencli-mcp cdp --endpoint <url>` runs the MCP server on stdio against a CDP endpoint instead of the extension: a headless Chrome started for a test run, or an app's embedded browser view. No extension, Native Messaging host, or user profile is involved. The page engine is the extension's own (the same locators, actions, snapshots, network capture, console and dialogs), run in the server process.
+
+```bash
+chrome --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/profile
+opencli-mcp cdp --endpoint http://127.0.0.1:9222 --allow-origin https://staging.example.com
+```
+
+- `http(s)://host:port` or `ws(s)://…/devtools/browser/…` is a whole browser: `tab_open` opens tabs, popups join the session, and `session_finalize` closes the tabs the agent opened.
+- Any other `ws(s)://` URL is a single page, such as `ws://…/devtools/page/<id>` or an app's relay for one view. `tab_open` adopts and navigates that page, and finalize releases it without closing it.
+- `--allow-origin` (comma-separated) blocks main-frame navigation to any other origin in the browser itself; the page stays where it was. Without it every http(s) origin is allowed.
+- `--launch` (instead of `--endpoint`) starts a headless Chrome of its own: a throwaway profile, the debugging port bound to 127.0.0.1, and the browser killed and its profile removed when the server exits. The binary is `--chrome <path>`, else `CHROME_PATH`, else a usual Chrome or Chromium install.
+
+There are no user tabs to list or claim, no tab groups, no cursor overlay, and download completion (`tab_download_wait`) is not tracked. One process serves one MCP client and one endpoint.
+
 ## OpenCode
 
 Run `opencli-mcp setup --clients opencode`. Setup adds a local MCP server to your global OpenCode config (`~/.config/opencode/opencode.json`, or `opencode.jsonc` if that is your existing file). It preserves comments, other settings, and any existing `opencli-mcp` entry. Restart OpenCode, then use `opencode mcp list` to check the connection. The executable and script paths are absolute, so OpenCode does not need your terminal's npm `PATH`.
