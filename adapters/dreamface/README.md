@@ -3,6 +3,10 @@
 Commands for DreamFace (`https://testm.facemojiapp.com` by default; pass `origin` for another deployment). They call the
 site's own API from the logged-in page (`_shared.js`), so they need a browser profile that is signed in.
 
+- **Login**: `login {email, password}` signs this browser in to that account (replacing another one) through the site's
+  own dialog and returns the session's API headers. The site runs a reCAPTCHA before it logs in; the command never
+  solves it: with `captcha_wait_sec` it waits for a person to complete the check in the same page, without it fails
+  with `captcha_required`. Already signed in to the same account, it returns at once without touching the form.
 - **Read**: `whoami`, `credits`, `works`, `work`, `projects`, `conversation`, `avatars`, `voices`, `image-models`,
   `agent-models`, `agent-tools`, `sitemap`.
 - **Write** (spend credits or the free daily uses): `agent-chat`, `agent-image`, `agent-video`, `ai-image`, `ai-video`,

@@ -9,8 +9,9 @@ export const DEFAULT_ORIGIN = 'https://testm.facemojiapp.com';
 /** The web app's version, sent as app_version/appVersion like the site does. */
 export const APP_VERSION = '4.7.1';
 const OK = 'THS12140000000';
-/** md5("userInfo") and md5("fingerprintjsStatClientId"): the web app's storage keys. */
-const USER_INFO_KEY = '49f290d6e8459c53f31f97de37921086';
+/** md5("userInfo"), md5("loginSecretKey") and md5("fingerprintjsStatClientId"): the web app's storage keys. */
+export const USER_INFO_KEY = '49f290d6e8459c53f31f97de37921086';
+export const LOGIN_SECRET_KEY = 'f5c8e5076df19ee3120af47e17e0cfda';
 const CLIENT_ID_KEY = '19fb90a3b8f09f14a91f48eee48c12af';
 
 export const ORIGIN_ARG = { name: 'origin', type: 'string', default: DEFAULT_ORIGIN, help: 'DreamFace site, e.g. the test environment https://testm.facemojiapp.com' };
@@ -26,14 +27,21 @@ export async function ensureOnSite(tab, origin) {
   if (!url || !url.startsWith(origin)) await tab.goto(`${origin}/zh/home`, { waitUntil: 'load' });
 }
 
-/** The logged-in session: { token, userId, accountId, clientId, email, vip }. Throws an auth error when logged out. */
-export async function session(tab, origin) {
-  await ensureOnSite(tab, origin);
+/** The session stored in the page (the tab must be on the origin), or null when logged out. */
+export async function storedSession(tab) {
   const raw = await tab.evaluate(`(() => ({ user: localStorage.getItem(${JSON.stringify(USER_INFO_KEY)}), clientId: localStorage.getItem(${JSON.stringify(CLIENT_ID_KEY)}) }))()`);
   let user = null;
   try { user = raw?.user ? JSON.parse(raw.user) : null; } catch { user = null; }
-  if (!user?.token || !user?.userId || !user?.accountId) throw errors.auth('DreamFace: not logged in', `Open ${origin} in this browser and sign in, then retry.`);
+  if (!user?.token || !user?.userId || !user?.accountId) return null;
   return { token: user.token, userId: user.userId, accountId: user.accountId, clientId: raw.clientId || '', email: user.thirdId || null, vip: user.userRights?.vipLabel ?? null };
+}
+
+/** The logged-in session: { token, userId, accountId, clientId, email, vip }. Throws an auth error when logged out. */
+export async function session(tab, origin) {
+  await ensureOnSite(tab, origin);
+  const s = await storedSession(tab);
+  if (!s) throw errors.auth('DreamFace: not logged in', `Open ${origin} in this browser and sign in (or run dreamface/login), then retry.`);
+  return s;
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

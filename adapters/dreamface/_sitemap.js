@@ -218,6 +218,7 @@ export const TRAPS = [
 
 /** Page ↔ command: where a command's data shows on the pages, and what only the page has. */
 export const COMMANDS = [
+  { command: 'login', routes: ['/home'], page: '"登录/注册" → login dialog (email, password, reCAPTCHA checkbox after submit)', note: 'write: replaces the signed-in account; the reCAPTCHA is completed by a person' },
   { command: 'whoami', routes: ['/home'], page: 'account menu (email, plan). free_animate_left is the "N free times left today" line', note: 'read' },
   { command: 'credits', routes: ['/home', '/canvas', '/all-tools'], page: 'top-right number = paid; free_uses_left = "5 / 5" in the account menu and the "N Free Daily" labels', note: 'read; the page may show 0 while loading' },
   { command: 'agent-models', routes: ['/home', '/canvas'], page: '"Agent Settings" → Driving Model', note: 'read' },
