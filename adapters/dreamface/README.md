@@ -1,6 +1,6 @@
 # DreamFace adapter
 
-Commands for DreamFace (`https://testm.facemojiapp.com` by default; pass `origin` for another deployment). They call the
+Commands for DreamFace (`https://testm.facemojiapp.com` by default; pass `origin` for another deployment). `site.json` declares the site's front ends (`origins`), its `login` and `map` roles and the `guide` agents working on DreamFace get. They call the
 site's own API from the logged-in page (`_shared.js`), so they need a browser profile that is signed in.
 
 - **Login**: `login {email, password}` signs this browser in to that account (replacing another one) through the site's
@@ -11,6 +11,11 @@ site's own API from the logged-in page (`_shared.js`), so they need a browser pr
   `agent-models`, `agent-tools`, `sitemap`.
 - **Write** (spend credits or the free daily uses): `agent-chat`, `agent-image`, `agent-video`, `ai-image`, `ai-video`,
   `avatar-video`.
+
+## Regression suite
+
+`suite.json` checks the server endpoints these commands call (see `docs/sites.md`). When a command starts calling
+another endpoint, add a check for it and list the command in its `adapters`.
 
 ## Site map
 

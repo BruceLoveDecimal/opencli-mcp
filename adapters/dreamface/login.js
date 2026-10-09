@@ -69,6 +69,8 @@ async function openLoginDialog(tab) {
 export default defineAdapter({
   description: 'Log in to DreamFace with an email and password, replacing another account logged in to this browser. Returns the account and the API headers of its session. A reCAPTCHA check has to be completed by a person in the same page. （登录 账号 鉴权）',
   access: 'write',
+  // run by the application hosting the agent, with credentials the agent never sees: not listed in sites_search
+  audience: 'host',
   domain: 'facemojiapp.com',
   args: [
     ORIGIN_ARG,
@@ -77,7 +79,7 @@ export default defineAdapter({
     { name: 'captcha_wait_sec', type: 'int', default: 0, min: 0, max: 600, help: 'How long to wait for a person to complete a reCAPTCHA check in the page; 0 fails with captcha_required at once' },
     { name: 'timeout_sec', type: 'int', default: 60, min: 10, max: 900, help: 'Overall time for the login, including captcha_wait_sec' },
   ],
-  result: { kind: 'value', description: 'The logged-in account', fields: { account: 'string', user_id: 'string', account_id: 'string', logged_in_now: 'boolean', headers: 'object' } },
+  result: { kind: 'value', description: 'The logged-in account (the login role of site.json)', fields: { account: 'string', user_id: 'string', account_id: 'string', logged_in_now: 'boolean', headers: 'object' } },
   async run({ tab, args }) {
     const origin = siteOrigin(args);
     const email = String(args.email).trim();

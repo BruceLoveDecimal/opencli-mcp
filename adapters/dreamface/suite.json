@@ -1,0 +1,279 @@
+{
+	"name": "dreamface",
+	"title": "DreamFace 存量接口（opencli-mcp dreamface adapter 依赖的服务端接口）",
+	"match": ["facemojiapp.com"],
+	"page": "/zh/home",
+	"session": {
+		"token": "localStorage:49f290d6e8459c53f31f97de37921086#token",
+		"userId": "localStorage:49f290d6e8459c53f31f97de37921086#userId",
+		"accountId": "localStorage:49f290d6e8459c53f31f97de37921086#accountId",
+		"clientId": "localStorage:19fb90a3b8f09f14a91f48eee48c12af"
+	},
+	"secrets": ["token"],
+	"headers": { "dream-face-web": "dream-face-web", "Client-Id": "${clientId}", "token": "${token}" },
+	"checks": [
+		{
+			"id": "agent-models",
+			"name": "智能体模型列表",
+			"method": "POST",
+			"path": "/df-tide-agent/model/v1/list",
+			"body": { "user_id": "${userId}", "account_id": "${accountId}" },
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data", "minItems": 1 },
+				{ "path": "data[*].name", "type": "string" }
+			],
+			"adapters": ["agent-models"]
+		},
+		{
+			"id": "agent-tools",
+			"name": "智能体工具列表",
+			"method": "GET",
+			"path": "/df-tide-agent/agent/v2/tools/list",
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data.tools", "minItems": 1 },
+				{ "path": "data.tools[*].name", "type": "string" },
+				{ "path": "data.tools[*].category", "type": "string" }
+			],
+			"adapters": ["agent-tools"]
+		},
+		{
+			"id": "avatars",
+			"name": "系统数字人形象",
+			"method": "POST",
+			"path": "/df-server/avatar/list_sys",
+			"body": { "user_id": "${userId}", "account_id": "${accountId}", "page": 1, "size": 200 },
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "avatars", "minItems": 1 },
+				{ "path": "avatars[*].id", "type": "string" },
+				{ "path": "avatars[*].type", "type": "string" },
+				{ "path": "avatars[*].path", "type": "string" },
+				{ "path": "avatars[?type=IMAGE]", "minItems": 1 }
+			],
+			"adapters": ["avatars", "avatar-video"]
+		},
+		{
+			"id": "voices",
+			"name": "系统音色",
+			"method": "POST",
+			"path": "/df-server/audio/v2/get_animate_audio_list",
+			"body": { "code": "zh" },
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data.audio_list", "minItems": 1 },
+				{ "path": "data.audio_list[*].audio_id", "type": "string" },
+				{ "path": "data.audio_list[*].voice_engine_id", "type": "string" },
+				{ "path": "data.audio_list[*].name", "type": "string" }
+			],
+			"adapters": ["voices", "avatar-video"]
+		},
+		{
+			"id": "credits",
+			"name": "积分余额",
+			"method": "POST",
+			"path": "/dw-server/credits/get_remaining_credits",
+			"body": { "user_id": "${userId}", "account_id": "${accountId}", "time_zone": "Asia/Shanghai" },
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data.paid_count", "type": "number" },
+				{ "path": "data.free_count", "type": "number" }
+			],
+			"adapters": ["credits"]
+		},
+		{
+			"id": "free-rights",
+			"name": "每日免费次数",
+			"method": "POST",
+			"path": "/dw-server/rights/get_free_rights",
+			"body": { "user_id": "${userId}", "account_id": "${accountId}" },
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data.remain_count", "type": "number" },
+				{ "path": "data.total_count", "type": "number" }
+			],
+			"adapters": ["credits"]
+		},
+		{
+			"id": "user-rights",
+			"name": "会员权益（驼峰字段、无 data 包装）",
+			"method": "POST",
+			"path": "/df-subscribe/subscribe/get_user_rights",
+			"body": { "userId": "${userId}", "accountId": "${accountId}" },
+			"expect": [
+				{ "path": "statusCode", "equals": "THS12140000000" },
+				{ "path": "vipLabel", "type": "boolean" },
+				{ "path": "vipRemainderDay", "type": "number" },
+				{ "path": "freeAnimateNum", "type": "number" }
+			],
+			"adapters": ["whoami"]
+		},
+		{
+			"id": "image-models",
+			"name": "AI 图像模型配置",
+			"method": "GET",
+			"path": "/dw-server/model_config/ai_image/list/zh",
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data", "minItems": 1 },
+				{ "path": "data[*].model_key", "type": "string" },
+				{ "path": "data[*].text_to_image_config.generation_params", "type": "object" },
+				{ "path": "data[*].text_to_image_config.output_config", "type": "object" },
+				{ "path": "data[?model_key=dreamImage]", "minItems": 1 }
+			],
+			"adapters": ["image-models", "ai-image"]
+		},
+		{
+			"id": "projects",
+			"name": "画布项目列表",
+			"method": "GET",
+			"path": "/df-tide-agent/project/v1/list",
+			"query": { "user_id": "${userId}", "account_id": "${accountId}", "limit": 20 },
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data.data", "minItems": 1 },
+				{ "path": "data.data[*].id", "type": "string" },
+				{ "path": "data.data[*].conversation_id", "type": "string" }
+			],
+			"capture": { "projectId": "data.data[0].id", "conversationId": "data.data[0].conversation_id" },
+			"adapters": ["projects", "conversation"]
+		},
+		{
+			"id": "conversation",
+			"name": "画布对话记录",
+			"method": "GET",
+			"path": "/df-tide-agent/conversation/v1/history/${conversationId}",
+			"query": {
+				"user_id": "${userId}",
+				"account_id": "${accountId}",
+				"limit": 20,
+				"scene_type": "INFINITE_CANVAS",
+				"project_id": "${projectId}"
+			},
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data.conversation_id", "equals": "${conversationId}" },
+				{ "path": "data.data", "type": "array" },
+				{ "path": "data.data[*].role", "type": "string" }
+			],
+			"adapters": ["conversation", "agent-chat", "agent-image", "agent-video"]
+		},
+		{
+			"id": "works",
+			"name": "最近作品列表（生成任务的进度也靠它轮询）",
+			"method": "POST",
+			"path": "/dw-server/work/v2/get_recent_creation_list",
+			"body": { "user_id": "${userId}", "account_id": "${accountId}", "appVersion": "4.7.1", "page": 1, "size": 20 },
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data.list", "minItems": 1 },
+				{ "path": "data.list[*].id", "type": "string" },
+				{ "path": "data.list[*].animate_id", "type": "string" },
+				{ "path": "data.list[*].web_work_status", "type": "number" },
+				{ "path": "data.list[?web_work_status=200]", "minItems": 1 }
+			],
+			"capture": { "workId": "data.list[?web_work_status=200].id" },
+			"adapters": ["works", "ai-image", "ai-video", "avatar-video"]
+		},
+		{
+			"id": "work-detail",
+			"name": "作品详情与下载地址",
+			"method": "GET",
+			"path": "/dw-server/work/get_work_detail_web",
+			"query": { "work_id": "${workId}", "user_id": "${userId}", "account_id": "${accountId}" },
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data.id", "equals": "${workId}" },
+				{ "path": "data.work_url", "type": "string" }
+			],
+			"adapters": ["work", "ai-image", "ai-video", "avatar-video"]
+		},
+		{
+			"id": "template-config",
+			"name": "模板配置（AI 视频模板 id）",
+			"method": "GET",
+			"path": "/dw-server/sys_config/query/template_config",
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data.value", "jsonHas": "aiVideoTextId" }
+			],
+			"adapters": ["ai-video"]
+		},
+		{
+			"id": "check-text",
+			"name": "口播文本审核",
+			"method": "POST",
+			"path": "/dw-server/batch_task/v1/batch_check_text",
+			"body": { "texts": ["大家好，欢迎来到 DreamFace。"] },
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data[0]", "equals": true }
+			],
+			"adapters": ["avatar-video"]
+		},
+		{
+			"id": "pt-template",
+			"name": "照片说话模板",
+			"method": "POST",
+			"path": "/dw-server/pt/get_pt_template_detail",
+			"body": { "user_id": "${userId}", "account_id": "${accountId}", "app_version": "4.7.1" },
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data.template_id", "type": "string" },
+				{ "path": "data.play_types", "type": "array" }
+			],
+			"adapters": ["avatar-video"]
+		},
+		{
+			"id": "project-create",
+			"name": "创建画布项目：参数校验探测（空参数，不创建项目）",
+			"method": "POST",
+			"path": "/df-tide-agent/project/v1/create",
+			"body": {},
+			"expect": [
+				{ "path": "status_code", "equals": "-1000" },
+				{ "path": "status_msg", "equals": "Parameter Illegal" }
+			],
+			"adapters": ["agent-chat", "agent-image", "agent-video"]
+		},
+		{
+			"id": "agent-chat",
+			"name": "智能体对话流：参数校验探测（空参数，不消耗次数）",
+			"method": "POST",
+			"path": "/df-tide-agent/agent/v2/chat",
+			"body": {},
+			"response": "sse",
+			"expect": [
+				{ "path": "events[0].event", "equals": "error" },
+				{ "path": "events[0].data.error", "equals": "Parameter Illegal" },
+				{ "path": "events[?event=done].data.success", "equals": false }
+			],
+			"adapters": ["agent-chat", "agent-image", "agent-video"]
+		},
+		{
+			"id": "task-submit",
+			"name": "提交生成任务：参数校验探测（空参数，不消耗积分）",
+			"method": "POST",
+			"path": "/dw-server/task/v2/submit",
+			"body": {},
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000002" },
+				{ "path": "status_msg", "equals": "Parameter Illegal" }
+			],
+			"adapters": ["ai-image", "avatar-video"]
+		},
+		{
+			"id": "animate-image",
+			"name": "提交 AI 视频：参数校验探测（空参数，不消耗积分）",
+			"method": "POST",
+			"path": "/dw-server/face/animate_image_web",
+			"body": {},
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000002" },
+				{ "path": "status_msg", "equals": "Parameter Illegal" }
+			],
+			"adapters": ["ai-video"]
+		}
+	]
+}

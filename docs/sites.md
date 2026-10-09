@@ -4,7 +4,15 @@ Built-in adapters cover Twitter/X (`twitter`), Bilibili (`bilibili`), Reddit (`r
 
 - `sites_search` without a query lists available sites; with a task, keyword, or domain it finds commands and returns their argument schemas.
 - `site_run` executes a command directly without enabling it first.
-- A site's optional `site.json` can declare `aliases` for task search (for example, `{"aliases":["B站"]}`); `sites_search` returns them with the site list. Command descriptions and aliases remain part of the adapter descriptor.
+- A site's optional `site.json` tells agents and the application hosting them about the site; `sites_search` without a query returns it with the site list (adapterApi 2; aliases since 1). All fields are optional; aliases merge across sources, any other field comes from the latest source that sets it:
+  - `aliases`: names for task search, e.g. `["B站"]`;
+  - `origins`: the site's front ends, `https://*.example.com` matching every subdomain, so a host can tell which site a page belongs to;
+  - `allowOrigins`: third-party origins its pages open, such as a login page's captcha;
+  - `account`: the account its `login` role signs in to (default: the site name; an app adapter may name the same account);
+  - `roles`: standard roles and the commands implementing them, e.g. `{"login": "login", "map": "sitemap"}`. `login` takes `origin`, `email`, `password`, `captcha_wait_sec`, `timeout_sec` and returns `{account, logged_in_now}` (optionally `headers`); it fails with `auth_required` or, when a person has to solve a captcha and `captcha_wait_sec` ran out, `captcha_required`. `map` returns the site map without touching the page;
+  - `guide`: agent-facing usage notes for working on this site.
+- A site may keep a regression suite in `<site>/suite.json`: fixed requests to the server endpoints its commands depend on, with expectations on the responses. The engine does not read it; a host (quality-agent) runs it from the logged-in page and judges it by code, and it updates with the adapters. Each check lists the commands relying on that endpoint in `adapters`.
+- A command whose descriptor sets `audience: 'host'` is run by the hosting application (a login with credentials the agent never sees): `sites_search` leaves it out, `site_run` still runs it. Command descriptions and aliases remain part of the adapter descriptor.
 - `sites.enable(site, {write?})` in `js` exposes typed tools named `<site>_<command>` and emits `tools/list_changed`. By default it exposes read commands; `write:true` also exposes write commands. `sites.disable(site)` removes those tools.
 - Commands are also callable in `js` as `await sites.<site>.<command>({...args})`.
 - Adapters use the same `tab` object API as interactive exploration and run in a background tab of the connected Chrome profile.

@@ -76,6 +76,6 @@
     }
   },
   "opencliMcp": {
-    "adapterApi": 1
+    "adapterApi": 2
   }
 }

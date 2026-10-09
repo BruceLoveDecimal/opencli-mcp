@@ -78,7 +78,25 @@ export interface AdapterDescriptor {
   args?: Arg[];
   /** aliases resolve to this command */
   aliases?: string[];
+  /** `host`: run by the application hosting the agent (e.g. a login with credentials the agent never sees); left out of
+   * `sites_search`, still runnable with `site_run`. Default `agent`. */
+  audience?: 'agent' | 'host';
   run(ctx: AdapterContext): Promise<unknown>;
+}
+
+/** `<site>/site.json`: what the host needs to know about a site (all fields optional). */
+export interface SiteManifest {
+  aliases?: string[];
+  /** The site's front ends; `https://*.example.com` matches every subdomain. */
+  origins?: string[];
+  /** Third-party origins its pages open (e.g. a login page's captcha). */
+  allowOrigins?: string[];
+  /** The account its `login` role signs in to; defaults to the site name (an app may share it). */
+  account?: string;
+  /** Standard roles and the commands that implement them, e.g. { login: 'login', map: 'sitemap' }. */
+  roles?: Record<string, string>;
+  /** Agent-facing usage notes, given to agents working on this site. */
+  guide?: string;
 }
 
 /** Validate + return an adapter descriptor. Pure: no registration, no side effects. */

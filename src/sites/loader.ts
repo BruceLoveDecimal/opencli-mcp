@@ -35,9 +35,23 @@ export interface AdapterCommand {
   result?: { kind: 'rows' | 'value'; description: string; fields?: Record<string, string>; paginated?: boolean };
   args: Arg[];
   aliases?: string[];
+  /** `host` commands are left out of search: the hosting application runs them, agents do not see them. */
+  audience: 'agent' | 'host';
   source: SourceKind;
   run: (ctx: AdapterContext) => Promise<unknown>;
 }
+
+/** `<site>/site.json` merged across sources (adapter-sdk SiteManifest). */
+export interface SiteMetadata {
+  aliases: string[];
+  origins: string[];
+  allowOrigins: string[];
+  account: string;
+  roles: Record<string, string>;
+  guide?: string;
+}
+
+const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string' && Boolean(v.trim())).map((v) => v.trim()) : [];
 
 /** One descriptor validation path for built-in, user, and draft adapters. */
 export function adapterCommandFromDescriptor(site: string, name: string, source: SourceKind, descriptor: Record<string, unknown>): AdapterCommand {
@@ -51,6 +65,7 @@ export function adapterCommandFromDescriptor(site: string, name: string, source:
     result: d.result as AdapterCommand['result'],
     args: (d.args as Arg[]) ?? [],
     aliases: d.aliases as string[] | undefined,
+    audience: d.audience === 'host' ? 'host' : 'agent',
     run: d.run as AdapterCommand['run'],
   };
 }
@@ -102,15 +117,27 @@ export class SiteRegistry {
     catch { return []; }
   }
 
-  private siteAliases(site: string): string[] {
+  private siteAliases(site: string): string[] { return this.siteMetadata(site).aliases; }
+
+  /** site.json across sources: aliases merge, any other field the latest source that sets it wins. */
+  siteMetadata(site: string): SiteMetadata {
     const aliases = new Set<string>();
+    const out: SiteMetadata = { aliases: [], origins: [], allowOrigins: [], account: site, roles: {} };
     for (const source of this.existingDirs()) {
-      try {
-        const metadata = JSON.parse(fs.readFileSync(path.join(source.dir, site, 'site.json'), 'utf8')) as { aliases?: unknown };
-        if (Array.isArray(metadata.aliases)) for (const alias of metadata.aliases) if (typeof alias === 'string' && alias.trim()) aliases.add(alias.toLowerCase());
-      } catch { /* optional site metadata */ }
+      let metadata: Record<string, unknown>;
+      try { metadata = JSON.parse(fs.readFileSync(path.join(source.dir, site, 'site.json'), 'utf8')) as Record<string, unknown>; }
+      catch { continue; /* optional site metadata */ }
+      for (const alias of strings(metadata.aliases)) aliases.add(alias.toLowerCase());
+      if (strings(metadata.origins).length) out.origins = strings(metadata.origins);
+      if (strings(metadata.allowOrigins).length) out.allowOrigins = strings(metadata.allowOrigins);
+      if (typeof metadata.account === 'string' && metadata.account.trim()) out.account = metadata.account.trim();
+      if (metadata.roles && typeof metadata.roles === 'object') {
+        out.roles = Object.fromEntries(Object.entries(metadata.roles as Record<string, unknown>).filter(([, cmd]) => typeof cmd === 'string' && cmd.trim()).map(([role, cmd]) => [role, (cmd as string).trim()]));
+      }
+      if (typeof metadata.guide === 'string' && metadata.guide.trim()) out.guide = metadata.guide.trim();
     }
-    return [...aliases];
+    out.aliases = [...aliases];
+    return out;
   }
 
   /** site -> command-name -> absolute file path (later source wins). */
@@ -163,18 +190,19 @@ export class SiteRegistry {
 
   has(site: string): boolean { return this.map().has(site); }
 
-  sites(): Array<{ site: string; aliases: string[]; commands: number; read: number; write: number; domains: string[]; source: SourceKind; sample: string[] }> {
+  sites(): Array<{ site: string; commands: number; read: number; write: number; domains: string[]; source: SourceKind; sample: string[] } & SiteMetadata> {
     const idx = this.index ?? [];
     const map = this.map();
     return [...map.entries()].map(([site, cmds]) => {
       const metas = idx.filter((c) => c.site === site);
+      const hidden = new Set(metas.filter((c) => c.audience === 'host').map((c) => c.name));
       return {
-        site, aliases: this.siteAliases(site), commands: cmds.size,
+        site, ...this.siteMetadata(site), commands: cmds.size,
         read: metas.filter((c) => c.access === 'read').length,
         write: metas.filter((c) => c.access === 'write').length,
         domains: [...new Set(metas.map((c) => c.domain).filter(Boolean) as string[])],
         source: metas[0]?.source ?? 'builtin',
-        sample: [...cmds.keys()].slice(0, 6),
+        sample: [...cmds.keys()].filter((name) => !hidden.has(name)).slice(0, 6),
       };
     }).sort((a, b) => a.site.localeCompare(b.site));
   }
@@ -193,6 +221,7 @@ export class SiteRegistry {
     const hits: Array<{ site: string; name: string; description: string; score: number; access: string; domain?: string; args: ArgView[]; result?: AdapterCommand['result'] }> = [];
     const siteAliases = new Map<string, string[]>();
     for (const c of await this.all()) {
+      if (c.audience === 'host') continue;
       if (!siteAliases.has(c.site)) siteAliases.set(c.site, this.siteAliases(c.site));
       const hay = { site: c.site.toLowerCase(), name: c.name.toLowerCase(), desc: c.description.toLowerCase(), domain: (c.domain ?? '').toLowerCase(), aliases: (c.aliases ?? []).join(' ').toLowerCase() };
       let score = 0;
