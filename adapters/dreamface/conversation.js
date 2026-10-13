@@ -2,7 +2,7 @@ import { defineAdapter, errors } from 'opencli-mcp/adapter-sdk';
 import { ORIGIN_ARG, api, ids, messageRow, session, siteOrigin } from './_shared.js';
 
 export default defineAdapter({
-  description: 'Messages of one DreamFace agent conversation (a canvas project), with the images/videos each produced. （智能体 对话记录）',
+  description: 'Messages of one DreamFace agent conversation (a canvas project), with the images/videos each produced. Reads INFINITE_CANVAS history scoped to project_id, not /i-want ordinary chat history. （画布智能体 对话记录）',
   access: 'read',
   domain: 'facemojiapp.com',
   args: [

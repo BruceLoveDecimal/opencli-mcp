@@ -2,7 +2,7 @@ import { defineAdapter, errors } from 'opencli-mcp/adapter-sdk';
 import { ORIGIN_ARG, runAgent, siteOrigin } from './_shared.js';
 
 export default defineAdapter({
-  description: 'Ask the DreamFace agent (home page / canvas) a question and get its answer. Starts a new canvas project; may use a free daily agent use or credits. （智能体 问答 对话）',
+  description: 'Ask the DreamFace Canvas agent through the API and get its answer. Creates a new project with scene_type=INFINITE_CANVAS; does not send through or update the current page, including /i-want. Not evidence of i-want UI behavior. May use a free daily agent use or credits. （画布智能体 问答 对话；非 i-want 页面发送）',
   access: 'write',
   domain: 'facemojiapp.com',
   args: [

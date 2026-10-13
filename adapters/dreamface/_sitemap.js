@@ -79,9 +79,10 @@ export const ROUTES = [
   {
     path: '/i-want', layer: 'studio', parent: '/home', title: 'DreamFace I Want Agent – Free AI Image, Video & Audio Generator',
     via: 'sidebar "Agent" (there is no /agent route: it 404s)',
-    sections: ['left: "Agent", "Collapse", "New Chat", "Recent" with past chats', 'composer as on /canvas'],
+    sections: ['left: "Agent", "Collapse", "New Chat", "Recent" with past chats', 'composer with attachment, textbox and Send; verify its own request rather than substituting a Canvas command'],
     controls: [
       'a "Recent" chat opens read-only in place; the URL stays /i-want (no conversation id)',
+      'agent-chat creates a separate Canvas project via API and does not update this page. Test input, model selection, Send and rendered replies on this page; inspect the actual request to confirm API version and scene_type (not yet captured in this map)',
       '"View available tools" → dialog "Tool List": Avatar Video (Lip Sync, Lip Sync 2.0, Dream Avatar, Dream Act), Image Generation (Text to Image, Image to Image, Nano Banana 2 / Pro, Seedream 4.0 / 4.5 / 5.0 Lite / 5.0 Pro, GPT Image 2.5 Flare / Sunburst), Image Editing (Colorize, Enhance, Outpainting, Inpainting, Swap Face, Remove Background), Video Generation (DreamVideo 1.5 / 3.0, Seedance 2.0 / 2.5 / 2.0 Fast / 2.0 Mini), Video Editing (Swap Face Video, Video Enhance, Video Matting, Video Composite, Video Translate), Audio (Voice Clone, TTS Clone, Text to Speech, TTS Pro, Voice List). Escape closes; do not click a tool',
     ],
     submit: ['"Send": disabled while empty'],
@@ -225,7 +226,7 @@ export const COMMANDS = [
   { command: 'agent-tools', routes: ['/i-want', '/canvas'], page: '"View available tools" → "Tool List"', note: 'read' },
   { command: 'projects', routes: ['/canvas'], page: '"Content Creation" project list', note: 'read' },
   { command: 'conversation', routes: ['/canvas?projectId=<id>'], page: 'the chat aside of a project', note: 'read; use it when the project page renders blank' },
-  { command: 'agent-chat', routes: ['/home', '/canvas', '/i-want'], page: 'composer + Send (Auto mode)', note: 'write: free daily agent use or credits' },
+  { command: 'agent-chat', routes: ['/canvas?projectId=<id>'], page: 'API-created Canvas project conversation', note: 'write: INFINITE_CANVAS with a new project_id; does not operate or update the current page, and cannot verify /i-want input, model selection, Send or rendered replies' },
   { command: 'agent-image', routes: ['/home', '/canvas'], page: 'composer asking for images', note: 'write: credits' },
   { command: 'agent-video', routes: ['/home', '/canvas'], page: 'composer asking for a video', note: 'write: credits, minutes' },
   { command: 'avatars', routes: ['/avatar', '/avatar-bulk'], page: '"Choose Avatar" (the page adds categories, search and Mine)', note: 'read' },

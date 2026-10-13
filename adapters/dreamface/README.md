@@ -12,6 +12,23 @@ site's own API from the logged-in page (`_shared.js`), so they need a browser pr
 - **Write** (spend credits or the free daily uses): `agent-chat`, `agent-image`, `agent-video`, `ai-image`, `ai-video`,
   `avatar-video`.
 
+## Conversation scope and UI acceptance
+
+`agent-chat`, `agent-image` and `agent-video` create a new Canvas project and call
+`/df-tide-agent/agent/v2/chat` with `scene_type: INFINITE_CANVAS` and `project_id`.
+`conversation` reads that project's history. These commands call APIs from the signed-in page;
+they do not type in the composer, click Send, navigate to the new project or update the current chat.
+Calling them while `/i-want` is open does not exercise that page's conversation flow.
+
+For `/i-want` input, model selection, sending and reply display cases, operate the actual page and
+verify its rendered result. Use `network_inspect` to correlate that send with its endpoint version,
+`scene_type`, `model`, `conversation_id` and presence or absence of `project_id`.
+The current `/i-want` request version and scene must be confirmed from that deployment's traffic;
+the backend distinguishes ordinary `CHAT` (default, no `project_id`) from `INFINITE_CANVAS`
+(required `project_id`), and isolates their histories. A successful Canvas answer cannot prove an
+ordinary chat UI case passed. For example, an API answer of “1+1=2” while the page still shows
+“你好” proves the API command returned a result, not that the page sent or displayed that exchange.
+
 ## Regression suite
 
 `suite.json` checks the server endpoints these commands call (see `docs/sites.md`). When a command starts calling

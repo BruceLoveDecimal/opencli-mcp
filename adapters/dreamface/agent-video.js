@@ -2,7 +2,7 @@ import { defineAdapter, errors } from 'opencli-mcp/adapter-sdk';
 import { ORIGIN_ARG, runAgent, siteOrigin } from './_shared.js';
 
 export default defineAdapter({
-  description: 'Have the DreamFace agent generate a short video from a description; waits for it (minutes) and returns its URL. Uses credits. （智能体 生成视频）',
+  description: 'Have the DreamFace agent generate a short video from a description; waits for it (minutes) and returns its URL. Creates a new INFINITE_CANVAS project through the API; does not operate or update /i-want. Uses credits. （画布智能体 生成视频）',
   access: 'write',
   domain: 'facemojiapp.com',
   args: [
