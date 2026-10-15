@@ -8,7 +8,7 @@ export default defineAdapter({
   args: [
     { name: 'prompt', type: 'string', required: true, help: 'What the image should show', example: '一只戴墨镜的柯基在海边，扁平插画风格' },
     { name: 'count', type: 'int', default: 1, min: 1, max: 4, help: 'How many images to ask for' },
-    { name: 'model', type: 'string', default: 'Claude Opus 5', help: 'Agent model; see dreamface agent-models' },
+    { name: 'model', type: 'string', help: 'Agent model from agent-models; omitted uses the first currently available model' },
     { name: 'timeout_sec', type: 'int', default: 300, min: 30, max: 1800 },
     ORIGIN_ARG,
   ],
@@ -17,7 +17,7 @@ export default defineAdapter({
     const prompt = String(args.prompt || '').trim();
     if (!prompt) throw errors.argument('`prompt` is required');
     const count = args.count ?? 1;
-    const turn = await runAgent(tab, siteOrigin(args), { message: `生成${count}张图片：${prompt}。只要${count}张，直接生成，不要追问。`, model: args.model || 'Claude Opus 5', timeoutSec: args.timeout_sec ?? 300 });
+    const turn = await runAgent(tab, siteOrigin(args), { message: `生成${count}张图片：${prompt}。只要${count}张，直接生成，不要追问。`, model: args.model, timeoutSec: args.timeout_sec ?? 300 });
     if (!turn.images.length) throw errors.empty(`The agent produced no image. It said: ${turn.answer.slice(0, 300)}`);
     return turn;
   },

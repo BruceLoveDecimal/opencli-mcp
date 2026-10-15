@@ -104,8 +104,19 @@ function media(item) {
  * The stream is read inside the page (it can run for minutes while a video renders) and polled with short evaluates,
  * so no single browser command outlives its deadline.
  */
+/** Resolve live configuration before creating any project or starting a billable turn. */
+export async function agentModel(tab, origin, s, requested) {
+  const models = await api(tab, origin, s, '/df-tide-agent/model/v1/list', { method: 'POST', body: ids(s) });
+  const available = (models || []).filter((m) => m.name && m.is_active !== false);
+  const selected = requested ? available.find((m) => m.name === requested) : available[0];
+  if (!selected) throw errors.argument(requested ? `Agent model ${requested} is unavailable` : 'No Agent model is currently available', 'Read dreamface agent-models; no generation has been submitted.');
+  return selected.name;
+}
+
 export async function runAgent(tab, origin, { message, model, timeoutSec }) {
+  const deadline = Date.now() + timeoutSec * 1000;
   const s = await session(tab, origin);
+  model = await agentModel(tab, origin, s, model);
   // creating an empty project is harmless to repeat; the test environment times out here now and then
   const project = await api(tab, origin, s, '/df-tide-agent/project/v1/create', { method: 'POST', body: ids(s), retryServerError: true });
   const run = `opencli_df_${Date.now().toString(36)}`;
@@ -135,12 +146,11 @@ export async function runAgent(tab, origin, { message, model, timeoutSec }) {
     })().catch((e) => { state.error = String(e && e.message || e); state.done = true; });
     return true;
   })()`, { allowWrite: true });
-  const deadline = Date.now() + timeoutSec * 1000;
   let state;
   for (;;) {
     await sleep(2000);
     state = await tab.evaluate(`window[${JSON.stringify(run)}]`);
-    if (!state) throw errors.upstream('DreamFace: the page reloaded while the agent was running', 'Retry; keep the DreamFace tab open.');
+    if (!state) throw errors.upstream('DreamFace: the page reloaded while the agent was running', `Do not resubmit; query project ${project.id}, conversation ${project.conversation_id}.`);
     if (state.done) break;
     if (Date.now() > deadline) throw errors.upstream(`DreamFace agent did not finish within ${timeoutSec}s`, `The run continues on DreamFace; read it later with dreamface conversation (project ${project.id}, conversation ${project.conversation_id}).`);
   }
@@ -150,7 +160,7 @@ export async function runAgent(tab, origin, { message, model, timeoutSec }) {
     const timedOut = /timeout/i.test(`${detail.error_type ?? ''} ${detail.error ?? ''} ${state.error}`);
     throw errors.upstream(
       `DreamFace agent failed: ${detail.error_type || detail.code || state.error}`,
-      timedOut ? 'The DreamFace agent timed out on its side (the test environment does this under load); retry.' : `Project ${project.id}; inspect it with dreamface conversation.`,
+      `Do not resubmit${timedOut ? ' after the upstream timeout' : ''}; inspect project ${project.id}, conversation ${project.conversation_id} with dreamface conversation.`,
     );
   }
   const turn = await lastTurn(tab, origin, s, project);

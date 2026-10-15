@@ -415,7 +415,7 @@ export async function evaluate(
  */
 export async function screenshot(
   tabId: number,
-  options: { format?: 'png' | 'jpeg'; quality?: number; fullPage?: boolean; width?: number; height?: number } = {},
+  options: { format?: 'png' | 'jpeg'; quality?: number; fullPage?: boolean; width?: number; height?: number; fromSurface?: boolean } = {},
 ): Promise<string> {
   await ensureAttached(tabId);
 
@@ -459,6 +459,8 @@ export async function screenshot(
 
   try {
     const params: Record<string, unknown> = { format };
+    // Embedded views may be hidden and have no compositor surface; capture their viewport instead.
+    if (options.fromSurface !== undefined) params.fromSurface = options.fromSurface;
     if (format === 'jpeg' && options.quality !== undefined) {
       params.quality = Math.max(0, Math.min(100, options.quality));
     }

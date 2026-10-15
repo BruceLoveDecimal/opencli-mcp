@@ -72,3 +72,9 @@ image + all tools + creations; the SEO site), and write down what you see:
    (see the `one-click-samples` and `tour-submits` traps). Check `credits` and `works` before and after a walk; if
    either changed, find the click that did it and add it to `TRAPS`.
 6. Update `ROUTES` / `TRAPS` / `COMMANDS` and `VERIFIED`, and redraw the tree above if routes were added or moved.
+
+### Targeted verification 2026-10-15
+
+The login dialog now checks the email before displaying the password. The host login command supports both this two-step form and the earlier combined form; a person still completes any verification challenge. The Agent sidebar opens `/i-want`, and its live model catalogue must be read before choosing a model. A delivered click should be checked against the observed destination, rather than a guessed `/agent` route. Only the five smoke routes and login were rechecked; this does not claim a new full-site DFS.
+
+Agent commands resolve an omitted model from the live catalogue and reject unavailable explicit models before creating a project. A failed or unknown turn retains project/conversation query instructions and must not be resubmitted.

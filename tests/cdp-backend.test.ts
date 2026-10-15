@@ -14,7 +14,7 @@ const CHROME = process.env.CHROME_PATH ?? [
 ].find((p) => fs.existsSync(p));
 
 const PAGE = `<!doctype html><title>Sign up</title>
-<form id="f"><label>Name <input name="name"></label> <button>Submit</button></form>
+<form id="f"><label>Name <input name="name"></label> <button style="cursor:pointer">Submit</button></form>
 <p id="out"></p><a href="https://example.com/">Leave</a>
 <script>
 document.getElementById('f').addEventListener('submit', async (e) => {
@@ -113,7 +113,10 @@ describe.skipIf(!CHROME)('cdp backend', () => {
 
     const filled = parse(await client.callTool({ name: 'tab_act', arguments: { action: 'fill', target: { label: 'Name' }, value: 'Ada' } }));
     expect(filled).toMatchObject({ ok: true, verified: true });
-    expect(parse(await client.callTool({ name: 'tab_act', arguments: { action: 'click', target: { role: 'button', name: 'Submit' } } })).ok).toBe(true);
+    const state = parse(await client.callTool({ name: 'tab_observe', arguments: {} }));
+    const submit = /button \"Submit\".*?\[ref=(e\d+)\]/.exec(String(state.state));
+    expect(submit).not.toBeNull();
+    expect(parse(await client.callTool({ name: 'tab_act', arguments: { action: 'click', target: { ref: submit![1] } } })).ok).toBe(true);
     expect(parse(await client.callTool({ name: 'tab_expect', arguments: { text: 'Welcome, Ada' } })).ok).toBe(true);
 
     const failedExpect = await client.callTool({ name: 'tab_expect', arguments: { text: 'Goodbye', timeout: 1 } });
@@ -210,6 +213,10 @@ describe.skipIf(!CHROME)('cdp backend', () => {
     writeDemoAdapter();
     const borrowed = parse(await client.callTool({ name: 'site_run', arguments: { site: 'demo', command: 'page', args: {} } }));
     expect(borrowed).toMatchObject({ ok: true, value: { title: 'Sign up', url: `${site.url}/` } });
+
+    const captured = await client.callTool({ name: 'tab_observe', arguments: { mode: 'both' } });
+    expect(captured.isError).not.toBe(true);
+    expect((captured.content as Array<{ type: string }>).some((block) => block.type === 'image')).toBe(true);
 
     // a second tab_open reuses the one page
     const second = parse(await client.callTool({ name: 'tab_open', arguments: { url: `${site.url}/?again` } }));

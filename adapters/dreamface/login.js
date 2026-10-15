@@ -14,7 +14,7 @@ const DIALOG = '[role=dialog]';
 
 /** Login dialog state, read from the page: open, captcha shown, error text under the form. */
 const STATE_JS = `(() => {
-  const dialog = [...document.querySelectorAll(${JSON.stringify(DIALOG)})].find((d) => d.querySelector('input[name=email]'));
+  const dialog = [...document.querySelectorAll(${JSON.stringify(DIALOG)})].find((d) => d.querySelector('input[name=email], input[name=password]'));
   const box = document.getElementById('recaptcha-email-form');
   const challenge = [...document.querySelectorAll('iframe[src*="recaptcha/api2/bframe"], iframe[src*="recaptcha/enterprise/bframe"]')]
     .some((f) => { const r = f.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(f).visibility !== 'hidden'; });
@@ -40,7 +40,7 @@ function result(s, origin, loggedInNow) {
 /** Close dialogs that are not the login one: the home page opens a promotion banner a moment after load, with a
  * mask that intercepts clicks. Its own close button first, Escape otherwise. */
 async function dismissOverlays(tab) {
-  const other = `${DIALOG}:not(:has(input[name=email]))`;
+  const other = `${DIALOG}:not(:has(input[name=email], input[name=password]))`;
   for (let i = 0; i < 4; i++) {
     const open = await tab.evaluate(`Boolean(document.querySelector(${JSON.stringify(other)}))`);
     if (!open) return;
@@ -84,6 +84,8 @@ export default defineAdapter({
     const origin = siteOrigin(args);
     const email = String(args.email).trim();
     if (!email || !args.password) throw errors.argument('email and password are required');
+    const deadline = Date.now() + args.timeout_sec * 1000;
+    const stepTimeout = () => Math.max(1, Math.min(8000, deadline - Date.now()));
     await tab.goto(`${origin}/zh/home`, { waitUntil: 'load' });
 
     const current = await storedSession(tab);
@@ -97,10 +99,15 @@ export default defineAdapter({
     await sleep(2500); // the banner opens a moment after load
     await openLoginDialog(tab);
     await tab.act({ action: 'fill', target: { selector: `${DIALOG} input[name=email]` }, value: email });
-    await tab.act({ action: 'fill', target: { selector: `${DIALOG} input[name=password]` }, value: String(args.password) });
+    // The current form checks the email first. Retain the legacy combined-form path without another submit.
+    const passwordReady = await tab.evaluate(`Boolean(document.querySelector('${DIALOG} input[name=password]'))`);
+    if (!passwordReady) {
+      await tab.act({ action: 'click', target: { selector: `${DIALOG} button[type=submit]:visible` }, timeoutMs: stepTimeout() });
+      await tab.expect({ selector: `${DIALOG} input[name=password]` }, { timeoutMs: stepTimeout() });
+    }
+    await tab.act({ action: 'fill', target: { selector: `${DIALOG} input[name=password]` }, value: String(args.password), timeoutMs: stepTimeout() });
     await tab.act({ action: 'click', target: { selector: `${DIALOG} form button[type=submit]` } });
 
-    const deadline = Date.now() + args.timeout_sec * 1000;
     let captchaSince = null;
     while (Date.now() < deadline) {
       await sleep(1000);

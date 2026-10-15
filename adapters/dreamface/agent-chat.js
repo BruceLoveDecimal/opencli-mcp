@@ -7,7 +7,7 @@ export default defineAdapter({
   domain: 'facemojiapp.com',
   args: [
     { name: 'message', type: 'string', required: true, help: 'What to ask the agent', example: '用一句话介绍 DreamFace 能做什么' },
-    { name: 'model', type: 'string', default: 'Claude Opus 5', help: 'Agent model; see dreamface agent-models' },
+    { name: 'model', type: 'string', help: 'Agent model from agent-models; omitted uses the first currently available model' },
     { name: 'timeout_sec', type: 'int', default: 180, min: 10, max: 1800 },
     ORIGIN_ARG,
   ],
@@ -15,6 +15,6 @@ export default defineAdapter({
   async run({ tab, args }) {
     const message = String(args.message || '').trim();
     if (!message) throw errors.argument('`message` is required');
-    return runAgent(tab, siteOrigin(args), { message, model: args.model || 'Claude Opus 5', timeoutSec: args.timeout_sec ?? 180 });
+    return runAgent(tab, siteOrigin(args), { message, model: args.model, timeoutSec: args.timeout_sec ?? 180 });
   },
 });

@@ -353,7 +353,7 @@ export async function startCdpBackend(opts: CdpBackendOptions): Promise<CdpBacke
           const domain = cmd.domain?.replace(/^\./, '');
           return { id: cmd.id, ok: true, data: cookies.filter((c) => !domain || c.domain.replace(/^\./, '').endsWith(domain)).map((c) => ({ name: c.name, value: c.value, domain: c.domain, path: c.path, secure: c.secure, httpOnly: c.httpOnly, expirationDate: c.expires > 0 ? c.expires : undefined })) };
         }
-        case 'screenshot': { const tabId = await resolveTab(s, cmd.page); return pageScoped(cmd.id, tabId, await executor.screenshot(tabId, { format: cmd.format, quality: cmd.quality, fullPage: cmd.fullPage, width: cmd.width, height: cmd.height })); }
+        case 'screenshot': { const tabId = await resolveTab(s, cmd.page); return pageScoped(cmd.id, tabId, await executor.screenshot(tabId, { format: cmd.format, quality: cmd.quality, fullPage: cmd.fullPage, width: cmd.width, height: cmd.height, ...(mode === 'page' ? { fromSurface: false } : {}) })); }
         case 'cdp': {
           if (!cmd.cdpMethod) return { id: cmd.id, ok: false, error: 'Missing cdpMethod' };
           if (!CDP_ALLOWLIST.has(cmd.cdpMethod)) return { id: cmd.id, ok: false, error: `CDP method not permitted: ${cmd.cdpMethod}`, errorCode: 'cdp_not_allowed' };

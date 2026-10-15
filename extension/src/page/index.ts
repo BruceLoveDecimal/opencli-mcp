@@ -456,7 +456,8 @@ function intersectsViewport(el: Element): boolean {
   for (const r of el.getClientRects()) if (r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh) return true;
   return false;
 }
-const REF_LINE = /^(\s*)-\s.*\[ref=(e\d+|f\d+e\d+)\](:.*)?$/;
+// State markers follow the ref on clickable nodes; they must not bypass stable-id translation.
+const REF_LINE = /^(\s*)-\s.*?\[ref=(e\d+|f\d+e\d+)\](?:\s+\[[^\]]*\])*(:.*)?$/;
 /** Trim noise from a snapshot line: long URLs (google redirect chains etc.) and very long quoted text. */
 function capLine(s: string): string {
   return s
