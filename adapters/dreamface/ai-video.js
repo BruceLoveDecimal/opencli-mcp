@@ -1,11 +1,12 @@
 import { defineAdapter, errors } from 'opencli-mcp/adapter-sdk';
-import { ORIGIN_ARG, api, camelIds, session, siteOrigin, snakeKeys, templateConfig, waitForWork, workResult } from './_shared.js';
+import { ORIGIN_ARG, api, camelIds, session, siteOrigin, snakeKeys, templateConfig } from './_shared.js';
+import { waitForGeneration } from './_generation.js';
 
 /** The AI video page sends its own app version; the endpoint rejects the rest of the site's (4.7.1) as illegal. */
 const VIDEO_APP_VERSION = '5.3.0';
 
 export default defineAdapter({
-  description: 'AI Video: text-to-video with DreamFace\'s default video model (Dream Video, 480p); waits for the video and returns its URL. One free video per day, then credits. （AI 视频 文生视频 生成视频）',
+  description: 'AI Video: text-to-video with DreamFace\'s default video model (Dream Video, 480p); waits at most 30s, then returns readable media or a pending original task handle; continue read-only with generation-wait. One free video per day, then credits. （AI 视频 文生视频 生成视频）',
   access: 'write',
   domain: 'facemojiapp.com',
   args: [
@@ -16,7 +17,7 @@ export default defineAdapter({
     { name: 'timeout_sec', type: 'int', default: 900, min: 60, max: 3600 },
     ORIGIN_ARG,
   ],
-  result: { kind: 'value', description: 'The finished work', fields: { work_id: 'string', animate_id: 'string', url: 'string (signed, ~1h)', cover_url: 'string', duration: 'number' } },
+  result: { kind: 'value', description: 'Readable video or pending original task handle', fields: { status: 'string', handle: 'object', work_id: 'string', animate_id: 'string', url: 'string (signed, ~1h)', cover_url: 'string', duration: 'number' } },
   async run({ tab, args }) {
     const origin = siteOrigin(args);
     const prompt = String(args.prompt || '').trim();
@@ -49,7 +50,7 @@ export default defineAdapter({
       }),
     });
     if (!data?.animate_image_id) throw errors.upstream('DreamFace accepted the video but returned no id');
-    const work = await waitForWork(tab, origin, s, data.animate_image_id, args.timeout_sec ?? 900);
-    return { ...(await workResult(tab, origin, s, work)), prompt };
+    const result = await waitForGeneration(tab, origin, { kind: 'video', animate_id: data.animate_image_id, count: 1 }, Math.min(args.timeout_sec ?? 900, 30));
+    return { ...result, animate_id: data.animate_image_id, ...(result.media?.[0]?.url && { url: result.media[0].url }), prompt };
   },
 });

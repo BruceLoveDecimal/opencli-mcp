@@ -6,6 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+// @ts-expect-error Adapters are runtime JavaScript modules.
+import { probeMedia } from '../adapters/dreamface/_generation.js';
 
 const CHROME = process.env.CHROME_PATH ?? [
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -14,8 +16,10 @@ const CHROME = process.env.CHROME_PATH ?? [
 ].find((p) => fs.existsSync(p));
 
 const PAGE = `<!doctype html><title>Sign up</title>
-<form id="f"><label>Name <input name="name"></label> <button>Submit</button></form>
+<form id="f"><label>Name <input name="name"></label> <button style="cursor:pointer">Submit</button></form>
 <p id="out"></p><a href="https://example.com/">Leave</a>
+<section role="group" aria-label="Image editor"><button type="button" onclick="document.getElementById('out').textContent='Image selected'">Run</button></section>
+<section role="group" aria-label="Video editor"><button type="button" onclick="document.getElementById('out').textContent='Video selected'">Run</button></section>
 <script>
 document.getElementById('f').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -32,6 +36,10 @@ const APP = `<!doctype html><title>App</title><p>Home</p>
 async function startSite(): Promise<{ url: string; close: () => Promise<void> }> {
   let flaky = 0;
   const server = http.createServer((req, res) => {
+    if (req.url === '/pixel.gif') {
+      res.writeHead(200, { 'content-type': 'image/gif' }).end(Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==', 'base64'));
+      return;
+    }
     if (req.url === '/api/signup' && req.method === 'POST') {
       let body = '';
       req.on('data', (c) => { body += c; });
@@ -113,8 +121,23 @@ describe.skipIf(!CHROME)('cdp backend', () => {
 
     const filled = parse(await client.callTool({ name: 'tab_act', arguments: { action: 'fill', target: { label: 'Name' }, value: 'Ada' } }));
     expect(filled).toMatchObject({ ok: true, verified: true });
-    expect(parse(await client.callTool({ name: 'tab_act', arguments: { action: 'click', target: { role: 'button', name: 'Submit' } } })).ok).toBe(true);
+    const state = parse(await client.callTool({ name: 'tab_observe', arguments: {} }));
+    const submit = /button \"Submit\".*?\[ref=(e\d+)\]/.exec(String(state.state));
+    expect(submit).not.toBeNull();
+    expect(parse(await client.callTool({ name: 'tab_act', arguments: { action: 'click', target: { ref: submit![1] } } })).ok).toBe(true);
     expect(parse(await client.callTool({ name: 'tab_expect', arguments: { text: 'Welcome, Ada' } })).ok).toBe(true);
+
+    // Stable refs used as a scope must resolve in the same identity space as direct targets.
+    await client.callTool({ name: 'js', arguments: { code: `const t = await browser.tabs.selected(); await t.evaluate('document.querySelectorAll(\'[role=group]\').forEach(el => el.replaceWith(el.cloneNode(true)))', { allowWrite: true })` } });
+    await client.callTool({ name: 'tab_find', arguments: { target: { selector: 'section[aria-label="Video editor"]' } } });
+    const scoped = parse(await client.callTool({ name: 'tab_observe', arguments: {} }));
+    const imageGroup = /group "Image editor".*?\[ref=(e\d+)\]/.exec(String(scoped.state));
+    expect(imageGroup).not.toBeNull();
+    const selected = parse(await client.callTool({ name: 'tab_act', arguments: { action: 'click', target: { role: 'button', name: 'Run', within: imageGroup![1] }, observe: true } }));
+    expect(selected.ok, JSON.stringify(selected)).toBe(true);
+    expect(String((selected.after as Record<string, unknown>).state)).toContain('Image selected');
+    const missingScope = parse(await client.callTool({ name: 'tab_act', arguments: { action: 'click', target: { role: 'button', name: 'Run', within: 'e999999' } } }));
+    expect(missingScope).toMatchObject({ ok: false, error: { code: 'stale_ref' } });
 
     const failedExpect = await client.callTool({ name: 'tab_expect', arguments: { text: 'Goodbye', timeout: 1 } });
     expect(failedExpect.isError).toBe(true);
@@ -125,6 +148,15 @@ describe.skipIf(!CHROME)('cdp backend', () => {
 
     const logs = parse(await client.callTool({ name: 'js', arguments: { code: 'const t = await browser.tabs.selected(); (await t.console.read()).entries.map((e) => e.message)' } }));
     expect(JSON.stringify(logs)).toContain('signup done');
+
+    const mediaTab = { evaluate: async (code: string) => {
+      const result = parse(await client.callTool({ name: 'js', arguments: { code: `const mediaTab = await browser.tabs.selected(); await mediaTab.evaluate(${JSON.stringify(code)})` } }));
+      if (!result.ok) throw new Error(JSON.stringify(result));
+      return result.value;
+    } };
+    expect(await probeMedia(mediaTab, `${site.url}/pixel.gif`, 'image', 2000)).toMatchObject({ readable: true, verification: 'image_decoded', width: 1, height: 1 });
+    expect(await probeMedia(mediaTab, `${site.url}/`, 'image', 2000)).toMatchObject({ readable: false });
+    expect(await probeMedia(mediaTab, `${site.url}/pixel.gif`, 'video', 2000)).toMatchObject({ readable: false });
 
     // links and tab_open to other origins are blocked in the browser itself
     await client.callTool({ name: 'tab_act', arguments: { action: 'click', target: { role: 'link', name: 'Leave' } } });
@@ -210,6 +242,10 @@ describe.skipIf(!CHROME)('cdp backend', () => {
     writeDemoAdapter();
     const borrowed = parse(await client.callTool({ name: 'site_run', arguments: { site: 'demo', command: 'page', args: {} } }));
     expect(borrowed).toMatchObject({ ok: true, value: { title: 'Sign up', url: `${site.url}/` } });
+
+    const captured = await client.callTool({ name: 'tab_observe', arguments: { mode: 'both' } });
+    expect(captured.isError).not.toBe(true);
+    expect((captured.content as Array<{ type: string }>).some((block) => block.type === 'image')).toBe(true);
 
     // a second tab_open reuses the one page
     const second = parse(await client.callTool({ name: 'tab_open', arguments: { url: `${site.url}/?again` } }));

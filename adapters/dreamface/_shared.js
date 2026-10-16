@@ -51,24 +51,28 @@ export function headers(s, extra = {}) {
 }
 
 /** tab.fetchJson with the session headers, retrying the gateway errors DreamFace's test environment returns now and then. */
-export async function request(tab, s, url, { method = 'GET', body, timeoutMs, retryServerError = false } = {}) {
-  // 502-504: the gateway did not reach the service. 500 only when the caller says a repeat is harmless.
+export async function request(tab, s, url, { method = 'GET', body, timeoutMs, retryServerError = false, deadline } = {}) {
+  // A gateway error cannot prove a write was rejected. Only reads or explicitly harmless requests may retry.
+  const canRetry = retryServerError || method === 'GET';
   const retryable = retryServerError ? /HTTP 50[0234]\b/ : /HTTP 50[234]\b/;
   for (let attempt = 1; ; attempt++) {
+    const remaining = deadline === undefined ? undefined : deadline - Date.now();
+    if (remaining !== undefined && remaining <= 0) throw errors.upstream('Read deadline reached');
+    const limit = remaining === undefined ? timeoutMs : Math.max(1, Math.min(timeoutMs ?? 30_000, remaining));
     try {
-      return await tab.fetchJson(url, { method, headers: headers(s), ...(body !== undefined && { body }), ...(timeoutMs && { timeoutMs }) });
+      return await tab.fetchJson(url, { method, headers: headers(s), ...(body !== undefined && { body }), ...(limit && { timeoutMs: limit }) });
     } catch (error) {
-      if (attempt >= 3 || !retryable.test(String(error?.message))) throw error;
-      await sleep(1000 * attempt);
+      if (attempt >= 3 || !canRetry || !retryable.test(String(error?.message))) throw error;
+      await sleep(deadline === undefined ? 1000 * attempt : Math.max(0, Math.min(1000 * attempt, deadline - Date.now())));
     }
   }
 }
 
 /** Call a DreamFace API on the page; returns `data`. Query values that are undefined are dropped. */
-export async function api(tab, origin, s, path, { method = 'GET', query, body, timeoutMs, retryServerError } = {}) {
+export async function api(tab, origin, s, path, { method = 'GET', query, body, timeoutMs, retryServerError, deadline } = {}) {
   const url = new URL(path, origin);
   for (const [k, v] of Object.entries(query || {})) if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
-  const json = await request(tab, s, url.href, { method, body, timeoutMs, retryServerError: retryServerError ?? method === 'GET' });
+  const json = await request(tab, s, url.href, { method, body, timeoutMs, retryServerError: retryServerError ?? method === 'GET', deadline });
   const code = json?.status_code ?? json?.statusCode;
   if (code === OK) return json.data ?? json.body ?? null;
   const message = json?.status_msg ?? json?.statusMsg ?? 'no status';
@@ -104,13 +108,27 @@ function media(item) {
  * The stream is read inside the page (it can run for minutes while a video renders) and polled with short evaluates,
  * so no single browser command outlives its deadline.
  */
-export async function runAgent(tab, origin, { message, model, timeoutSec }) {
+/** Resolve live configuration before creating any project or starting a billable turn. */
+export async function agentModel(tab, origin, s, requested, deadline) {
+  const models = await api(tab, origin, s, '/df-tide-agent/model/v1/list', { method: 'POST', body: ids(s), deadline });
+  const available = (models || []).filter((m) => m.name && m.is_active !== false);
+  const selected = requested ? available.find((m) => m.name === requested) : available[0];
+  if (!selected) throw errors.argument(requested ? `Agent model ${requested} is unavailable` : 'No Agent model is currently available', 'Read dreamface agent-models; no generation has been submitted.');
+  return selected.name;
+}
+
+export async function runAgent(tab, origin, { message, model, timeoutSec, kind, count = 1 }) {
+  // A media submission must release the host's session lock while its original task keeps running.
+  const mediaRun = kind === 'image' || kind === 'video';
+  const deadline = Date.now() + Math.min(timeoutSec * 1000, mediaRun ? 30_000 : Infinity);
   const s = await session(tab, origin);
+  model = await agentModel(tab, origin, s, model, deadline);
   // creating an empty project is harmless to repeat; the test environment times out here now and then
-  const project = await api(tab, origin, s, '/df-tide-agent/project/v1/create', { method: 'POST', body: ids(s), retryServerError: true });
+  const project = await api(tab, origin, s, '/df-tide-agent/project/v1/create', { method: 'POST', body: ids(s), retryServerError: true, deadline });
+  if (!project?.id || !project?.conversation_id) throw errors.upstream('Project creation returned no recoverable identity; inspect recent projects before retrying');
   const run = `opencli_df_${Date.now().toString(36)}`;
   const body = { ...ids(s), message, model, execution_mode: 'auto', platform_type: 'WEB', scene_type: 'INFINITE_CANVAS', project_id: project.id, app_version: APP_VERSION };
-  await tab.evaluate(`(() => {
+  const launch = () => tab.evaluate(`(() => {
     const state = window[${JSON.stringify(run)}] = { events: [], done: false, error: null };
     (async () => {
       const res = await fetch('/df-tide-agent/agent/v2/chat', { method: 'POST', credentials: 'include', headers: ${JSON.stringify(headers(s, { 'Content-Type': 'application/json', Accept: 'text/event-stream' }))}, body: ${JSON.stringify(JSON.stringify(body))} });
@@ -135,12 +153,15 @@ export async function runAgent(tab, origin, { message, model, timeoutSec }) {
     })().catch((e) => { state.error = String(e && e.message || e); state.done = true; });
     return true;
   })()`, { allowWrite: true });
-  const deadline = Date.now() + timeoutSec * 1000;
+  if (mediaRun) {
+    return runMediaTurn(tab, origin, s, project, { launch, run, message, kind, count, deadline });
+  }
+  await launch();
   let state;
   for (;;) {
     await sleep(2000);
     state = await tab.evaluate(`window[${JSON.stringify(run)}]`);
-    if (!state) throw errors.upstream('DreamFace: the page reloaded while the agent was running', 'Retry; keep the DreamFace tab open.');
+    if (!state) throw errors.upstream('DreamFace: the page reloaded while the agent was running', `Do not resubmit; query project ${project.id}, conversation ${project.conversation_id}.`);
     if (state.done) break;
     if (Date.now() > deadline) throw errors.upstream(`DreamFace agent did not finish within ${timeoutSec}s`, `The run continues on DreamFace; read it later with dreamface conversation (project ${project.id}, conversation ${project.conversation_id}).`);
   }
@@ -150,19 +171,72 @@ export async function runAgent(tab, origin, { message, model, timeoutSec }) {
     const timedOut = /timeout/i.test(`${detail.error_type ?? ''} ${detail.error ?? ''} ${state.error}`);
     throw errors.upstream(
       `DreamFace agent failed: ${detail.error_type || detail.code || state.error}`,
-      timedOut ? 'The DreamFace agent timed out on its side (the test environment does this under load); retry.' : `Project ${project.id}; inspect it with dreamface conversation.`,
+      `Do not resubmit${timedOut ? ' after the upstream timeout' : ''}; inspect project ${project.id}, conversation ${project.conversation_id} with dreamface conversation.`,
     );
   }
   const turn = await lastTurn(tab, origin, s, project);
   return { project_id: project.id, conversation_id: project.conversation_id, ...turn, ...usage(state.events) };
 }
 
+/** Match this input in its new project; an unrelated/latest assistant is never a recovery handle. */
+async function submittedTurn(tab, origin, s, project, message, deadline) {
+  const history = await api(tab, origin, s, `/df-tide-agent/conversation/v1/history/${encodeURIComponent(project.conversation_id)}`, {
+    query: { ...ids(s), limit: 100, scene_type: 'INFINITE_CANVAS', project_id: project.id }, deadline,
+  });
+  const rows = history?.data || [];
+  const users = rows.filter((row) => row.role === 'user' && row.content === message);
+  if (users.length !== 1) return null;
+  const start = rows.indexOf(users[0]) + 1;
+  const nextUser = rows.findIndex((row, index) => index >= start && row.role === 'user');
+  const answers = rows.slice(start, nextUser < 0 ? undefined : nextUser).filter((row) => row.role === 'assistant');
+  if (answers.length !== 1 || !answers[0].id) return null;
+  return { ...messageRow(answers[0]), user_message_id: users[0].id };
+}
+
+async function runMediaTurn(tab, origin, s, project, { launch, run, message, kind, count, deadline }) {
+  let turn = null;
+  let state = { done: false, error: null };
+  const result = (status, readError) => ({
+    status, terminal: state.done && !state.error ? 'done' : 'unconfirmed',
+    project_id: project.id, conversation_id: project.conversation_id,
+    ...(turn?.user_message_id && { user_message_id: turn.user_message_id }),
+    answer: turn?.content || '', images: turn?.images || [], videos: turn?.videos || [], audios: turn?.audios || [],
+    handle: { kind, project_id: project.id, conversation_id: project.conversation_id, ...(turn?.id && { message_id: turn.id }), origin, count },
+    ...(readError && { read_error: { code: readError.code || 'read_failed', message: String(readError.message || readError).slice(0, 500) } }),
+    ...usage(state.events || []),
+    hint: turn?.id
+      ? 'Only read this same handle with generation-wait (timeout_sec 1..180). Do not resubmit or add a fixed sleep after its pending result.'
+      : 'Do not resubmit. Read conversation for these exact project/conversation ids, match this submitted input and resolve its assistant message_id before generation-wait.',
+  });
+  try {
+    await launch();
+    let interval = 2000;
+    while (Date.now() < deadline) {
+      const observed = await tab.evaluate(`window[${JSON.stringify(run)}]`);
+      if (!observed) return result('command_outcome_unknown');
+      state = observed;
+      turn = await submittedTurn(tab, origin, s, project, message, deadline);
+      const outputs = kind === 'image' ? turn?.images : turn?.videos;
+      // These are attachments, not decoder evidence; generation-wait separately verifies readability.
+      if ((outputs || []).length >= count) return result('generated');
+      if (state.error) return result('command_outcome_unknown', new Error(state.error));
+      if (state.done) return result('no_media');
+      await sleep(Math.max(0, Math.min(interval, deadline - Date.now())));
+      interval = Math.min(8000, interval * 2);
+    }
+    return result('pending');
+  } catch (error) {
+    return result('command_outcome_unknown', error);
+  }
+}
+
 /** Which tools the agent called and the credits DreamFace reported for them, from the stream's events. */
 function usage(events) {
   const parse = (data) => { try { return JSON.parse(data); } catch { return {}; } };
   const tools = events.filter((e) => e.event === 'tool_call_start').map((e) => parse(e.data).name).filter((name) => name && name !== 'load_tool_schema');
-  const credits = events.filter((e) => e.event === 'dreamapi_usage').reduce((sum, e) => sum + (Number(parse(e.data).credit_usage) || 0), 0);
-  return { tools, credits_used: credits };
+  const usage = events.filter((e) => e.event === 'dreamapi_usage').map((e) => parse(e.data).credit_usage)
+    .filter((value) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)));
+  return { tools, credits_used: usage.length ? usage.reduce((sum, value) => sum + Number(value), 0) : null };
 }
 
 /** The latest assistant message of a canvas conversation, with its media. */
@@ -205,14 +279,18 @@ export async function submitTask(tab, origin, s, body) {
  */
 export async function waitForWork(tab, origin, s, animateId, timeoutSec) {
   const deadline = Date.now() + timeoutSec * 1000;
-  for (;;) {
-    const data = await api(tab, origin, s, '/dw-server/work/v2/get_recent_creation_list', { method: 'POST', body: { ...ids(s), appVersion: APP_VERSION, page: 1, size: 20 } });
-    const work = (data?.list || []).find((w) => w.animate_id === animateId);
-    const status = work?.web_work_status;
-    if (status === 200) return work;
-    if (typeof status === 'number' && status < 0) throw errors.upstream(`DreamFace: ${WORK_FAILURES[String(status)] || `failed with status ${status}`}`, `animate id ${animateId}`);
-    if (Date.now() > deadline) throw errors.upstream(`DreamFace work did not finish within ${timeoutSec}s`, `It continues on DreamFace; check it later with dreamface works (animate id ${animateId}).`);
-    await sleep(4000);
+  try {
+    for (;;) {
+      const data = await api(tab, origin, s, '/dw-server/work/v2/get_recent_creation_list', { method: 'POST', body: { ...ids(s), appVersion: APP_VERSION, page: 1, size: 20 }, retryServerError: true, deadline });
+      const work = (data?.list || []).find((w) => w.animate_id === animateId);
+      const status = work?.web_work_status;
+      if (status === 200) return work;
+      if (typeof status === 'number' && status < 0) throw errors.upstream(`DreamFace: ${WORK_FAILURES[String(status)] || `failed with status ${status}`}`, `animate id ${animateId}`);
+      if (Date.now() > deadline) throw errors.upstream(`DreamFace work did not finish within ${timeoutSec}s`, `It continues on DreamFace; check it later with dreamface works (animate id ${animateId}).`);
+      await sleep(Math.max(0, Math.min(4000, deadline - Date.now())));
+    }
+  } catch (error) {
+    throw errors.upstream(String(error?.message || error), `Do not resubmit. Read the original animate id ${animateId} with generation-wait or works.`);
   }
 }
 

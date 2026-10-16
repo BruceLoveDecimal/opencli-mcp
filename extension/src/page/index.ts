@@ -23,10 +23,23 @@ function injected(): Injected {
 }
 
 function query(selector: string, root: Node = document): Element[] {
-  const rm = /^aria-ref=(e\d+)$/.exec(selector);
-  if (rm) { const el = refToEl.get(rm[1]); return el && el.isConnected ? [el] : []; }
+  resetRefsIfEngineChanged();
   const i = injected();
-  return i.querySelectorAll(i.parseSelector(selector), root) as Element[];
+  const parsed = i.parseSelector(selector);
+  if (!parsed.parts.some((part: { name: string }) => part.name === 'aria-ref')) return i.querySelectorAll(parsed, root) as Element[];
+  // A scoped ref must never fall through to Playwright's independent ref numbering space.
+  let roots: Node[] = [root];
+  let start = 0;
+  for (let n = 0; n < parsed.parts.length; n++) {
+    const part = parsed.parts[n];
+    if (part.name !== 'aria-ref') continue;
+    if (n > start) roots = roots.flatMap((scope) => i.querySelectorAll({ parts: parsed.parts.slice(start, n) }, scope) as Element[]);
+    const el = refToEl.get(part.body);
+    roots = el?.isConnected && roots.some((scope) => scope === el || scope.contains(el)) ? [el] : [];
+    start = n + 1;
+  }
+  if (start < parsed.parts.length) roots = roots.flatMap((scope) => i.querySelectorAll({ parts: parsed.parts.slice(start) }, scope) as Element[]);
+  return [...new Set(roots)] as Element[];
 }
 
 /** Playwright's elementState throws for states that do not apply (e.g. 'checked' on a text input): read that as "not in this state". */
@@ -86,6 +99,11 @@ const ALIGN_BLOCKS = new Set(['start', 'center', 'end', 'nearest']);
 /** Locate → strict/unique-visible → states → scroll → wall-clock stable box → hit-test → mark. */
 export async function resolve(args: ResolveArgs): Promise<ResolveOutcome> {
   const { selector, fallback, strict, states, align } = args;
+  const refs = injected().parseSelector(selector).parts.filter((part: { name: string }) => part.name === 'aria-ref');
+  resetRefsIfEngineChanged();
+  if (refs.some((part: { body: string }) => !refToEl.get(part.body)?.isConnected)) {
+    return { error: { code: 'stale_ref', message: 'target or container ref is no longer available', hint: 'Observe once and choose a current unique target; do not repeat the same ref.' }, retry: false };
+  }
   let usedSelector = selector;
   let matches = query(selector);
   if (!matches.length && fallback) { usedSelector = fallback; matches = query(fallback); }
@@ -456,7 +474,8 @@ function intersectsViewport(el: Element): boolean {
   for (const r of el.getClientRects()) if (r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh) return true;
   return false;
 }
-const REF_LINE = /^(\s*)-\s.*\[ref=(e\d+|f\d+e\d+)\](:.*)?$/;
+// State markers follow the ref on clickable nodes; they must not bypass stable-id translation.
+const REF_LINE = /^(\s*)-\s.*?\[ref=(e\d+|f\d+e\d+)\](?:\s+\[[^\]]*\])*(:.*)?$/;
 /** Trim noise from a snapshot line: long URLs (google redirect chains etc.) and very long quoted text. */
 function capLine(s: string): string {
   return s

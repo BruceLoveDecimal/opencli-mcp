@@ -6,7 +6,7 @@
 // they expire on every re-render. Update this file (and VERIFIED) when a walk finds a change — see README.md here.
 
 /** When and how the map was last checked. */
-export const VERIFIED = '2026-09-29 on https://testm.facemojiapp.com, logged in as a Free account (967 credits, 5 free uses a day), English UI';
+export const VERIFIED = '2026-10-15 targeted live verification: /home, /i-want, /video, /image, /creation and login; other branches retain the 2026-09-29 walk';
 
 /** The two front ends that share the origin. They look different, load different bundles and 404 into the SEO shell. */
 export const LAYERS = [
@@ -28,6 +28,7 @@ export const LAYERS = [
  * they enable; nothing in `controls` spends anything unless it says so.
  */
 export const ROUTES = [
+  { path: '/zh/home', layer: 'seo', parent: '/', title: 'DreamFace', via: 'host login entry', sections: ['login dialog'], controls: ['登录/注册 → email → 继续 / Continue → password → 登录 / Log in; legacy combined form is also supported', 'reCAPTCHA or emailed verification is completed only by a person; password inputs must never be recorded'], submit: ['Login submits authentication only; no media generation'] },
   // ── studio ────────────────────────────────────────────────────────────────────────────────────────────────────────
   {
     path: '/home', layer: 'studio', parent: null, title: 'DreamFace – AI Avatar, Video & Image Generator All-in-One',
@@ -36,7 +37,7 @@ export const ROUTES = [
     controls: [
       'composer textbox, placeholder "Add your ideas, images, or reference materials here."',
       'button "Add attachment" (shows "Video/Image") → menu "Local Upload" / "From Creations"; "From Creations" opens dialog "My Creations" whose "Confirm" stays disabled until a work is picked; Escape closes',
-      'button "Ask GPT 5.6 Luna" (reads "Ask • GPT 5.6 Luna", aria-haspopup=listbox but opens a dialog "Agent Settings"): Generation Mode "Ask" (asks before each generation) / "Auto" (generates automatically); Driving Model "Claude Opus 5", "Gemini 3.5 Flash", "GPT 5.6 Luna", "GPT 5.6 Sol". Escape closes. Keep "Ask" when exploring',
+      'button "Ask GPT 5.6 Luna" (reads "Ask • GPT 5.6 Luna", aria-haspopup=listbox but opens a dialog "Agent Settings"): Generation Mode "Ask" (asks before each generation) / "Auto" (generates automatically); Driving models are live configuration: query agent-models first (2026-10-15: GPT 5.6 Luna / GPT 5.6 Sol); do not reuse removed defaults. Escape closes. Keep "Ask" when exploring',
       'switch "Canvas", checked by default',
       'preset chips "111222", "cecece", "Results after the triumph test", "meng", "Expand" (more: "Video Recreation", "Produce TVC Advertisement", "Product Poster", "Cinematic Short Footage"). A chip fills its own stored prompt, not its label ("meng" fills "hhh") and enables Send',
       'tool cards: "Avatar Video" → /avatar, "AI Video" → /video, "AI Image" → /image, "Video Enhance" → /apps/video-enhance, "See All" → /all-tools. Click the card button by its full name; bare text "AI Image" / "Video Enhance" also matches feed cards',
@@ -78,7 +79,7 @@ export const ROUTES = [
   },
   {
     path: '/i-want', layer: 'studio', parent: '/home', title: 'DreamFace I Want Agent – Free AI Image, Video & Audio Generator',
-    via: 'sidebar "Agent" (there is no /agent route: it 404s)',
+    via: 'sidebar "Agent" → /i-want. Verify the observed URL or Agent composer; never wait for guessed /agent. If a ref is stale, observe once and use an observed unique semantic target; do not repeat a delivered click just because a guessed URL did not match.',
     sections: ['left: "Agent", "Collapse", "New Chat", "Recent" with past chats', 'composer with attachment, textbox and Send; verify its own request rather than substituting a Canvas command'],
     controls: [
       'a "Recent" chat opens read-only in place; the URL stays /i-want (no conversation id)',
@@ -226,9 +227,10 @@ export const COMMANDS = [
   { command: 'agent-tools', routes: ['/i-want', '/canvas'], page: '"View available tools" → "Tool List"', note: 'read' },
   { command: 'projects', routes: ['/canvas'], page: '"Content Creation" project list', note: 'read' },
   { command: 'conversation', routes: ['/canvas?projectId=<id>'], page: 'the chat aside of a project', note: 'read; use it when the project page renders blank' },
+  { command: 'generation-wait', routes: ['/image', '/video', '/canvas?projectId=<id>'], page: 'result of an already submitted editor task or exact Canvas assistant message', note: 'read; animate_id OR project_id + conversation_id + message_id; decodes images or loads video metadata; pending never authorizes resubmission; Agent terminal remains unconfirmed' },
   { command: 'agent-chat', routes: ['/canvas?projectId=<id>'], page: 'API-created Canvas project conversation', note: 'write: INFINITE_CANVAS with a new project_id; does not operate or update the current page, and cannot verify /i-want input, model selection, Send or rendered replies' },
   { command: 'agent-image', routes: ['/home', '/canvas'], page: 'composer asking for images', note: 'write: credits' },
-  { command: 'agent-video', routes: ['/home', '/canvas'], page: 'composer asking for a video', note: 'write: credits, minutes' },
+  { command: 'agent-video', routes: ['/home', '/canvas'], page: 'composer asking for a video', note: 'write once: credits; returns original handle within a 30s observation window, then conversation/generation-wait reads only' },
   { command: 'avatars', routes: ['/avatar', '/avatar-bulk'], page: '"Choose Avatar" (the page adds categories, search and Mine)', note: 'read' },
   { command: 'voices', routes: ['/avatar', '/apps/voice-studio'], page: '"Choose Your Voice" (default "Grace")', note: 'read' },
   { command: 'avatar-video', routes: ['/avatar'], page: 'avatar, Text script, Voice, Animate Effect, Resolution, Generate', note: 'write: free daily use or credits' },

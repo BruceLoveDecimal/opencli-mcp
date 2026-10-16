@@ -223,8 +223,13 @@ export function createMcpServer(rt: Runtime, sessionId: string, opts: { version?
     const t = await tabOf(tab);
     const r = await t.act({ action: action as ActAction, target: checked.target, to: checked.to, value, files, direction, amount, settleMs, method: checked.method });
     if (!observe) return ok({ tab: t.id, ...r });
-    const { data, images } = stripImage({ tab: t.id, ...r, after: await t.observe() });
-    return ok(data, images);
+    try {
+      const { data, images } = stripImage({ tab: t.id, ...r, after: await t.observe() });
+      return ok(data, images);
+    } catch (error) {
+      // The input has already reached the page. A failed follow-up read must not invite another submission.
+      return ok({ tab: t.id, ...r, observationError: errorEnvelope(error).error, hint: 'Action already delivered. Observe read-only for the current state; do not replay the action.' });
+    }
   }));
   server.registerTool('tab_expect', { title: 'Expect', description: 'Assert what the page must show now. At least one of text / notText / url / title / selector / ref is required (visible:false requires absence, and needs selector or ref). Polls up to timeout seconds; fails with expectation_failed.', inputSchema: { tab: z.string().optional().describe('required when the session has more than one tab'), text: z.string().optional(), notText: z.string().optional(), url: z.string().optional(), title: z.string().optional(), selector: z.string().optional(), ref: z.string().optional(), visible: z.boolean().optional().describe('with selector or ref; false requires absence'), timeout: z.number().default(5) }, annotations: { readOnlyHint: true } }, async ({ tab, timeout, ...what }) => run(async () => { checkExpect(what); const t = await tabOf(tab); return ok({ tab: t.id, ...(await t.expect(what, { timeoutMs: timeout * 1000 })) }); }));
 

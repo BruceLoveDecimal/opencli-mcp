@@ -157,7 +157,7 @@
 				{ "path": "data.data", "type": "array" },
 				{ "path": "data.data[*].role", "type": "string" }
 			],
-			"adapters": ["conversation", "agent-chat", "agent-image", "agent-video"]
+			"adapters": ["conversation", "generation-wait", "agent-chat", "agent-image", "agent-video"]
 		},
 		{
 			"id": "works",
@@ -174,7 +174,7 @@
 				{ "path": "data.list[?web_work_status=200]", "minItems": 1 }
 			],
 			"capture": { "workId": "data.list[?web_work_status=200].id" },
-			"adapters": ["works", "ai-image", "ai-video", "avatar-video"]
+			"adapters": ["works", "generation-wait", "ai-image", "ai-video", "avatar-video"]
 		},
 		{
 			"id": "work-detail",
@@ -187,7 +187,7 @@
 				{ "path": "data.id", "equals": "${workId}" },
 				{ "path": "data.work_url", "type": "string" }
 			],
-			"adapters": ["work", "ai-image", "ai-video", "avatar-video"]
+			"adapters": ["work", "generation-wait", "ai-image", "ai-video", "avatar-video"]
 		},
 		{
 			"id": "template-config",
