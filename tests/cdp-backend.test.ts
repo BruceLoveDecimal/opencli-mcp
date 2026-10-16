@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import WebSocket from 'ws';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 // @ts-expect-error Adapters are runtime JavaScript modules.
@@ -33,6 +34,50 @@ document.getElementById('f').addEventListener('submit', async (e) => {
 const APP = `<!doctype html><title>App</title><p>Home</p>
 <script>localStorage.setItem('auth', JSON.stringify({ token: 'tok-123' })); console.warn('app ready');</script>`;
 
+const RESPONSIVE = `<!doctype html><title>Responsive editor</title>
+<section id="history">${Array.from({ length: 900 }, (_, n) => `<p>Historical record ${n}: ${'previous work '.repeat(12)}</p>`).join('')}</section>
+<section id="composer"></section>
+<style>#composer { position:fixed; bottom:10px; left:5%; width:90%; background:white; } input,textarea { width:95%; } dialog { position:fixed; top:10px; } </style>
+<script>
+const media = matchMedia('(max-width:700px)');
+function editor(parent) {
+ const input = document.createElement(media.matches ? 'textarea' : 'input');
+ input.placeholder = 'Describe a scene'; parent.append(input); input.focus();
+}
+function render() {
+ const root = document.getElementById('composer'); root.replaceChildren();
+ if (!media.matches) { editor(root); return; }
+ const entry = document.createElement('div'); entry.textContent='Describe a scene'; entry.tabIndex=0;
+ entry.onclick=()=>{ const dialog=document.createElement('dialog'); root.replaceChildren(dialog); dialog.showModal(); editor(dialog); };
+ root.append(entry);
+}
+media.addEventListener('change',render); render();
+</script>`;
+
+/** Only the fixture's viewport changes through CDP; every page interaction still uses typed MCP tools. */
+async function resizePage(endpoint: string, url: string, width: number, height: number, existing?: WebSocket): Promise<WebSocket> {
+  const pages = await (await fetch(`${endpoint}/json/list`)).json() as Array<{ url: string; webSocketDebuggerUrl: string }>;
+  const page = pages.find((p) => p.url === url)!;
+  const socket = existing ?? new WebSocket(page.webSocketDebuggerUrl);
+  try {
+    if (!existing) await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('viewport resize timed out')), 3000);
+      const receive = (raw: WebSocket.RawData) => {
+        const response = JSON.parse(String(raw));
+        if (response.id !== 1) return;
+        clearTimeout(timer);
+        socket.off('message', receive);
+        if (response.error) reject(new Error(JSON.stringify(response.error))); else resolve();
+      };
+      socket.on('message', receive);
+      socket.send(JSON.stringify({ id: 1, method: 'Emulation.setDeviceMetricsOverride', params: { width, height, deviceScaleFactor: 1, mobile: false } }));
+    });
+    // Disconnecting the controlling session resets Chrome's emulation; retain it across the whole flow.
+    return socket;
+  } catch (error) { socket.close(); throw error; }
+}
+
 async function startSite(): Promise<{ url: string; close: () => Promise<void> }> {
   let flaky = 0;
   const server = http.createServer((req, res) => {
@@ -57,6 +102,7 @@ async function startSite(): Promise<{ url: string; close: () => Promise<void> }>
       return;
     }
     if (req.url === '/app') { res.writeHead(200, { 'content-type': 'text/html' }).end(APP); return; }
+    if (req.url === '/responsive') { res.writeHead(200, { 'content-type': 'text/html' }).end(RESPONSIVE); return; }
     res.writeHead(200, { 'content-type': 'text/html' }).end(PAGE);
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -98,6 +144,43 @@ function parse(result: Awaited<ReturnType<Client['callTool']>>): Record<string, 
 
 describe.skipIf(!CHROME)('cdp backend', () => {
   const cleanup: Array<() => Promise<void> | void> = [];
+
+  it('discovers the live editor across viewport changes without guessing coordinates', async () => {
+    const site = await startSite(); cleanup.push(site.close);
+    const chrome = await startChrome();
+    cleanup.push(async () => { chrome.proc.kill(); await new Promise((r) => chrome.proc.once('exit', r)); fs.rmSync(chrome.profile, { recursive: true, force: true, maxRetries: 5 }); });
+    const transport = new StdioClientTransport({ command: process.execPath, args: ['--import', 'tsx', path.resolve('src/main.ts'), 'cdp', '--endpoint', chrome.endpoint, '--allow-origin', site.url], stderr: 'ignore' });
+    const client = new Client({ name: 'responsive-test', version: '1' }, { capabilities: {} });
+    await client.connect(transport); cleanup.push(() => client.close());
+    const url = `${site.url}/responsive`;
+    expect(parse(await client.callTool({ name: 'tab_open', arguments: { url } })).ok).toBe(true);
+    let previousRef: string | undefined;
+    let viewport: WebSocket | undefined;
+    cleanup.push(() => { viewport?.close(); });
+    for (const [width, height] of [[1280, 900], [360, 740], [1650, 960], [604, 856]]) {
+      viewport = await resizePage(chrome.endpoint, url, width, height, viewport);
+      // Wait for the fixture's responsive transition, rather than sleeping or assuming the old DOM survived.
+      const settled = parse(await client.callTool({ name: 'tab_expect', arguments: { selector: width <= 700 ? '#composer > div' : '#composer > input', timeout: 3 } }));
+      expect(settled.ok, JSON.stringify({ width, settled })).toBe(true);
+      if (width <= 700) {
+        const found = parse(await client.callTool({ name: 'tab_find', arguments: { target: { text: 'Describe a scene' } } }));
+        const entries = (found.result as { entries: Array<{ ref: string; tag: string; visible: boolean; editable: boolean | null }> }).entries;
+        const entry = entries.find((e) => e.visible && e.tag === 'div')!;
+        expect(entry, JSON.stringify(found)).toBeDefined();
+        expect(entry.editable).not.toBe(true);
+        expect(parse(await client.callTool({ name: 'tab_act', arguments: { action: 'click', target: { ref: entry.ref }, observe: true } })).ok).toBe(true);
+      }
+      const fields = parse(await client.callTool({ name: 'tab_find', arguments: { target: { selector: 'input, textarea, [contenteditable]' } } }));
+      const entries = (fields.result as { entries: Array<{ ref: string; visible: boolean; editable: boolean }> }).entries;
+      const field = entries.find((e) => e.visible && e.editable)!;
+      expect(field).toBeDefined();
+      if (previousRef) expect(parse(await client.callTool({ name: 'tab_act', arguments: { action: 'fill', target: { ref: previousRef }, value: 'must not land' } })).ok).toBe(false);
+      const filled = parse(await client.callTool({ name: 'tab_act', arguments: { action: 'fill', target: { ref: field.ref }, value: `scene ${width}`, observe: true } }));
+      expect(filled, JSON.stringify(filled)).toMatchObject({ ok: true, verified: true, actual: `scene ${width}` });
+      expect(String((filled.after as Record<string, unknown>).state)).toContain(`ref=${field.ref}`);
+      previousRef = field.ref;
+    }
+  }, 60_000);
   afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 
   it('drives a headless Chrome through the MCP tools, captures its requests and keeps it on allowed origins', async () => {

@@ -127,3 +127,11 @@ submission handles, and stop repeated failed interactions. Completion follows th
 is sufficient only when generation success is the goal; explicit visual or playback assertions still apply.
 Requested variants and follow-up edits remain separate authorized steps, each submitted once. Fixed smoke-test
 counts, media settings and deadlines belong to the test request rather than everyday product operation.
+
+### Responsive interaction
+
+Use the live editor exposed by the current page rather than a fixed window size or a remembered desktop form.
+A prompt-like div may be an entry that opens a separate editor. Inspect candidates with the read-only `tab_find`
+`target` form, activate the entry once if needed, then inspect the actual visible and editable field before typing.
+Viewport changes can replace nodes; resolve a fresh ref after the transition. Large action maps retain editors
+and focus while folding surrounding history. These checks never authorize a generation retry.

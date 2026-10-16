@@ -24,6 +24,8 @@ export function collapseAria(text: string, budget: number): { text: string; coll
   let collapsed = false;
   const size = () => lines.join('\n').length;
   while (size() > budget) {
+    const focused = /Focused: \[ref=([^\]]+)\]/.exec(lines.join('\n'))?.[1];
+    const protectedLine = lines.map((line) => /^\s*- (?:textbox|searchbox|combobox|spinbutton|dialog|alertdialog|editable|file-input)\b/.test(line) || Boolean(focused && line.includes(`[ref=${focused}]`)));
     let best: { i: number; end: number; gain: number } | null = null;
     for (let i = 0; i < lines.length; i++) {
       if (!/\[ref=e\d+\]/.test(lines[i]) || lines[i].includes('(collapsed)')) continue;
@@ -34,6 +36,8 @@ export function collapseAria(text: string, budget: number): { text: string; coll
         end = j;
       }
       if (end === i) continue;
+      // Keep ancestors of live editors and the focused target; fold history around them, wherever it sits.
+      if (protectedLine.slice(i + 1, end + 1).some(Boolean)) continue;
       const gain = lines.slice(i + 1, end + 1).join('\n').length;
       if (!best || gain > best.gain) best = { i, end, gain };
     }

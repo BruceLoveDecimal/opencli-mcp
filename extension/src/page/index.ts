@@ -117,7 +117,7 @@ export async function resolve(args: ResolveArgs): Promise<ResolveOutcome> {
   for (const st of states) {
     const r = stateOf(el, st);
     if (r.received === 'error:notconnected') return { error: { code: 'stale_ref', message: 'element detached during resolution' }, retry: true };
-    if (!r.matches) return { error: { code: st === 'visible' ? 'not_visible' : st === 'enabled' ? 'not_enabled' : 'not_editable', message: `element is not ${st}${r.received.startsWith('error:') ? ` (${r.received.slice(6)})` : ''}`, candidates: [candidate(el)] }, retry: true };
+    if (!r.matches) return { error: { code: st === 'visible' ? 'not_visible' : st === 'enabled' ? 'not_enabled' : 'not_editable', message: `element is not ${st}${r.received.startsWith('error:') ? ` (${r.received.slice(6)})` : ''}`, ...(st === 'editable' ? { hint: 'Inspect current input, textarea and [contenteditable] candidates with tab_find target before typing. A placeholder or editor entry is not an editable control; activate it once and observe the actual editor.' } : {}), candidates: [candidate(el)] }, retry: true };
   }
   try { el.scrollIntoView({ block: (ALIGN_BLOCKS.has(align.block) ? align.block : 'center') as ScrollLogicalPosition, inline: (ALIGN_BLOCKS.has(align.inline) ? align.inline : 'nearest') as ScrollLogicalPosition, behavior: 'instant' as ScrollBehavior }); } catch { /* not scrollable */ }
   // stable bounding box by wall clock: requestAnimationFrame is paused in background tabs
@@ -522,6 +522,13 @@ export function aria(args: AriaArgs = {}): string {
     out.push(`- file-input "${label.replaceAll('"', '\\"').slice(0, 100)}" [ref=${stableRefOf(input)}]${hidden ? ' (hidden)' : ''}${input.multiple ? ' (multiple)' : ''}${input.accept ? ` accepts ${input.accept.slice(0, 100)}` : ''}`);
   }
   if (missingFiles.length > 20) out.push(`- ${missingFiles.length - 20} more file inputs omitted`);
+  // Custom editors can be editable without an AX textbox role. Keep their real DOM refs addressable.
+  const missingEditors = query('input, textarea, [contenteditable]').filter((el) => !inAx.has(el) && is(el, 'visible') && is(el, 'editable') && !(el instanceof HTMLInputElement && el.type === 'file'));
+  for (const el of missingEditors.slice(0, 30)) {
+    const label = el.getAttribute('aria-label') || el.getAttribute('placeholder') || nameOf(el) || 'editable control';
+    out.push(`- editable "${label.replaceAll('"', '\\"').slice(0, 120)}" [ref=${stableRefOf(el)}]`);
+  }
+  if (missingEditors.length > 30) out.push(`- ${missingEditors.length - 30} additional editors; inspect with tab_find target`);
   // the plugin always ends its state with the focused element; ours names the focused ref so the next action can target it
   const active = document.activeElement;
   const focusRef = active && active !== document.body ? ariaRefOf(active) : null;
@@ -537,7 +544,7 @@ export function aria(args: AriaArgs = {}): string {
 
 const describe = (el: Element, i: number): FindEntry => {
   const attrs: Record<string, string> = {};
-  for (const a of ['id', 'name', 'type', 'placeholder', 'aria-label', 'title', 'href', 'data-testid', 'value']) {
+  for (const a of ['id', 'name', 'type', 'placeholder', 'aria-label', 'title', 'href', 'data-testid', 'contenteditable', 'aria-controls', 'aria-haspopup', 'value']) {
     const v = el.getAttribute(a); if (v) attrs[a] = a === 'value' && isCredentialField(el) ? '<redacted>' : v.slice(0, 200);
   }
   return { nth: i, ref: ariaRefOf(el), selector: replaySelector(el), tag: el.tagName.toLowerCase(), role: roleOf(el), name: nameOf(el).slice(0, 120), text: text(el).slice(0, 120), attrs, visible: is(el, 'visible'), enabled: stateOf(el, 'enabled').received.startsWith('error:') ? null : is(el, 'enabled'), editable: stateOf(el, 'editable').received.startsWith('error:') ? null : is(el, 'editable'), box: box(el) };
