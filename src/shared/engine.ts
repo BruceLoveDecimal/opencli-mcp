@@ -285,8 +285,12 @@ async function performUpload(io: ActIO, spec: ActSpec): Promise<ActResult> {
     const doc = await io.cdp('DOM.getDocument', { depth: 0 }) as { root: { nodeId: number } };
     const q = await io.cdp('DOM.querySelector', { nodeId: doc.root.nodeId, selector: '[data-opencli-act]' }) as { nodeId: number };
     await io.cdp('DOM.setFileInputFiles', { files, nodeId: q.nodeId });
-    const count = await io.call('fileSelectionCount') as number;
-    return { ok: true, kind: 'upload', ref: resolved.ref, matches_n: resolved.matches_n, visible_n: 0, match_level: 'exact', point: { x: 0, y: 0 }, method: 'cdp', hit: 'target', tag: 'input', waitedMs: Date.now() - started, selector: resolved.selector ?? undefined, files: count, verified: count === files.length };
+    let selection: Array<{ name: string; size: number; type: string }> | undefined;
+    let fileSelectionError: string | undefined;
+    try { selection = await io.call('fileSelection') as typeof selection; }
+    catch { fileSelectionError = 'File selection could not be read after delivery; inspect the page/network and do not upload again.'; }
+    const count = selection?.length;
+    return { ok: true, kind: 'upload', ref: resolved.ref, matches_n: resolved.matches_n, visible_n: 0, match_level: 'exact', point: { x: 0, y: 0 }, method: 'cdp', hit: 'target', tag: 'input', waitedMs: Date.now() - started, selector: resolved.selector ?? undefined, files: count, fileSelection: selection, fileSelectionError, verified: count === files.length && selection !== undefined && selection.every((file, index) => file.name === files[index].split(/[\\/]/).pop()) };
   } finally { await io.call('clearActMark').catch(() => {}); }
 }
 

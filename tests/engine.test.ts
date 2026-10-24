@@ -28,3 +28,26 @@ describe('click delivery', () => {
     expect(calls).toContain('Input.dispatchMouseEvent:mousePressed');
   });
 });
+
+it('preserves upload delivery when reading the consumed input fails', async () => {
+  const calls: string[] = [];
+  const io: ActIO = {
+    async call(fn) {
+      calls.push(fn);
+      if (fn === 'resolveUpload') return { ok: true, ref: 'e1', selector: '#file', matches_n: 1 };
+      if (fn === 'fileSelection') throw new Error('page navigated');
+      return null;
+    },
+    async cdp(method) {
+      calls.push(method);
+      if (method === 'DOM.getDocument') return { root: { nodeId: 1 } };
+      if (method === 'DOM.querySelector') return { nodeId: 2 };
+      return {};
+    },
+  };
+  const result = await performAct(io, { kind: 'upload', target: { ref: 'e1' }, files: ['/tmp/fixture.png'] });
+  expect(result).toMatchObject({ ok: true, kind: 'upload', verified: false });
+  expect(result.fileSelectionError).toContain('do not upload again');
+  expect(calls.filter((call) => call === 'DOM.setFileInputFiles')).toHaveLength(1);
+  expect(calls).toContain('clearActMark');
+});

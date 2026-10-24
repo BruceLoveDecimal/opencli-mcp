@@ -34,6 +34,22 @@ document.getElementById('f').addEventListener('submit', async (e) => {
 const APP = `<!doctype html><title>App</title><p>Home</p>
 <script>localStorage.setItem('auth', JSON.stringify({ token: 'tok-123' })); console.warn('app ready');</script>`;
 
+const UPLOAD = `<!doctype html><title>Uploads</title>
+<form><input id="files" aria-label="Files" type="file" accept="image/png" multiple hidden>
+<input aria-label="Single" id="single" type="file" hidden>
+<input aria-label="Disabled" id="disabled" type="file" disabled hidden></form><p id="out">waiting</p>
+<script>
+let events = 0;
+const input = document.getElementById('files');
+input.addEventListener('input', () => events++);
+input.addEventListener('change', async () => {
+ const files = [...input.files];
+ if (location.hash === '#clear') input.value = '';
+ const texts = await Promise.all(files.map(file => file.text()));
+ document.getElementById('out').textContent = 'handled events=' + events + ' bytes=' + texts.join('|');
+});
+</script>`;
+
 const RESPONSIVE = `<!doctype html><title>Responsive editor</title>
 <section id="history">${Array.from({ length: 900 }, (_, n) => `<p>Historical record ${n}: ${'previous work '.repeat(12)}</p>`).join('')}</section>
 <section id="composer"></section>
@@ -103,6 +119,7 @@ async function startSite(): Promise<{ url: string; close: () => Promise<void> }>
     }
     if (req.url === '/app') { res.writeHead(200, { 'content-type': 'text/html' }).end(APP); return; }
     if (req.url === '/responsive') { res.writeHead(200, { 'content-type': 'text/html' }).end(RESPONSIVE); return; }
+    if (req.url === '/upload') { res.writeHead(200, { 'content-type': 'text/html' }).end(UPLOAD); return; }
     res.writeHead(200, { 'content-type': 'text/html' }).end(PAGE);
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -144,6 +161,37 @@ function parse(result: Awaited<ReturnType<Client['callTool']>>): Record<string, 
 
 describe.skipIf(!CHROME)('cdp backend', () => {
   const cleanup: Array<() => Promise<void> | void> = [];
+
+  it.each(['browser', 'page'])('uploads hidden file controls through a %s endpoint', async (endpointKind) => {
+    const site = await startSite(); cleanup.push(site.close);
+    const chrome = await startChrome();
+    cleanup.push(async () => { chrome.proc.kill(); await new Promise((r) => chrome.proc.once('exit', r)); fs.rmSync(chrome.profile, { recursive: true, force: true, maxRetries: 5 }); });
+    const filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'upload-fixtures-'));
+    cleanup.push(() => fs.rmSync(filesDir, { recursive: true, force: true }));
+    const files = [path.join(filesDir, 'one.txt'), path.join(filesDir, 'two.txt')];
+    files.forEach((file, index) => fs.writeFileSync(file, `data${index}`));
+    const pages = await (await fetch(`${chrome.endpoint}/json/list`)).json() as Array<{ type: string; webSocketDebuggerUrl: string }>;
+    const endpoint = endpointKind === 'page' ? pages.find((p) => p.type === 'page')!.webSocketDebuggerUrl : chrome.endpoint;
+    const transport = new StdioClientTransport({ command: process.execPath, args: ['--import', 'tsx', path.resolve('src/main.ts'), 'cdp', '--endpoint', endpoint, '--allow-origin', site.url], stderr: 'ignore' });
+    const client = new Client({ name: 'upload-test', version: '1' }, { capabilities: {} });
+    await client.connect(transport); cleanup.push(() => client.close());
+    const opened = parse(await client.callTool({ name: 'tab_open', arguments: { url: `${site.url}/upload` } }));
+    const ref = /file-input "Files" \[ref=(e\d+)\]/.exec(String(opened.state))![1];
+    const act = async (target: Record<string, unknown>, paths: string[]) => parse(await client.callTool({ name: 'tab_act', arguments: { action: 'upload', target, files: paths, observe: true } }));
+    const uploaded = await act({ ref }, files);
+    expect(uploaded, JSON.stringify(uploaded)).toMatchObject({ ok: true, delivery: 'applied', controlState: 'verified', files: 2,
+      fileSelection: [{ name: 'one.txt', size: 5, type: 'text/plain' }, { name: 'two.txt', size: 5, type: 'text/plain' }] });
+    expect(parse(await client.callTool({ name: 'tab_expect', arguments: { text: 'handled events=1 bytes=data0|data1', timeout: 3 } })).ok).toBe(true);
+    expect(await act({ selector: '#single' }, files)).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
+    expect(await act({ selector: '#disabled' }, [files[0]])).toMatchObject({ ok: false, error: { code: 'not_enabled' } });
+    expect(await act({ selector: 'input[type=file]' }, [files[0]])).toMatchObject({ ok: false, error: { code: 'selector_ambiguous' } });
+    expect(await act({ ref }, [path.join(filesDir, 'missing.txt')])).toMatchObject({ ok: false, error: { code: 'upload_file_unavailable' } });
+    expect(await act({ ref }, ['relative.txt'])).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
+    await client.callTool({ name: 'tab_goto', arguments: { url: `${site.url}/upload#clear` } });
+    const cleared = await act({ selector: '#files' }, [files[0]]);
+    expect(cleared).toMatchObject({ ok: true, delivery: 'applied', controlState: 'unverified', files: 0, fileSelection: [] });
+    expect(parse(await client.callTool({ name: 'tab_expect', arguments: { text: 'handled events=2 bytes=data0', timeout: 3 } })).ok).toBe(true);
+  }, 60_000);
 
   it('discovers the live editor across viewport changes without guessing coordinates', async () => {
     const site = await startSite(); cleanup.push(site.close);

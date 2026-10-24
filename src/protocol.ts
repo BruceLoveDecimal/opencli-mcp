@@ -138,6 +138,8 @@ export interface ActResult {
   /** options actually selected; upload count */
   selected?: string[];
   files?: number;
+  fileSelection?: Array<{ name: string; size: number; type: string }>;
+  fileSelectionError?: string;
   /** Child tabs from this source tab while the action ran; each is claimed into the same session. */
   openedTabs?: Array<{ page?: string; tabId: number; url?: string; title?: string; pending?: true }>;
   /** Page.downloadWillBegin events observed while this action ran; completion is checked separately. */

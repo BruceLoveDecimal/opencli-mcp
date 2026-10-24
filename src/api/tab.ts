@@ -12,6 +12,7 @@ import type { FindEntry, FindResult, QueryFindResult, ElementAtResult, Expectati
 import type { DialogInfo, DownloadWaitResult, FrameStep } from '../protocol.js';
 import type { SessionContext } from './context.js';
 import { pageRequest, type PageRequestOptions, type PageResponse } from './page-request.js';
+import { inspectUploadFiles } from './upload-files.js';
 
 export type Target = ({ frame?: FrameStep | FrameStep[]; /** container (css/selector/eN) to resolve inside */ within?: string }) & (
   | { ref: number | string }
@@ -193,10 +194,13 @@ export class Tab {
           opts = { ...opts, target: { x: vp.x, y: vp.y } };
         }
         if (!opts.target) throw new ActionError('missing_target', `action "${action}" needs a target`, 'Pass a target: a {ref} from observe, or a selector/role+name/label/text/testid.');
+        const uploadFiles = action === 'upload' ? await inspectUploadFiles(opts.files) : undefined;
         const r = await page.act({ kind: action, target: opts.target as Record<string, unknown>, value: opts.value, files: opts.files, to: opts.to as Record<string, unknown> | undefined, direction: opts.direction, amount: opts.amount, timeoutMs: opts.timeoutMs, settleMs: opts.settleMs ?? 600, cursor: this.ctx.rt.cursorEnabled, ...(opts.method ? { method: opts.method } : {}) });
         if (capture) await this.harvest(page);
         const delivery = r.method === 'dom' || ['fill', 'check', 'uncheck', 'select', 'upload', 'focus'].includes(action) ? 'applied' : action === 'click' || action === 'dblclick' ? 'received' : 'dispatched';
-        const controlVerified = r.verified === true || (action === 'check' && r.checked === true) || (action === 'uncheck' && r.checked === false) || (action === 'select' && Array.isArray(r.selected) && r.selected.length > 0);
+        const controlVerified = uploadFiles
+          ? r.fileSelection?.length === uploadFiles.length && r.fileSelection.every((file, index) => file.name === uploadFiles[index].name && file.size === uploadFiles[index].size)
+          : r.verified === true || (action === 'check' && r.checked === true) || (action === 'uncheck' && r.checked === false) || (action === 'select' && Array.isArray(r.selected) && r.selected.length > 0);
         // Return the outcome and the fields needed to choose the next action.
         return {
           action,
@@ -210,6 +214,8 @@ export class Tab {
           ...(r.checked !== undefined ? { checked: r.checked, changed: r.changed } : {}),
           ...(r.selected !== undefined ? { selected: r.selected } : {}),
           ...(r.files !== undefined ? { files: r.files } : {}),
+          ...(r.fileSelection !== undefined ? { fileSelection: r.fileSelection } : {}),
+          ...(r.fileSelectionError ? { fileSelectionError: r.fileSelectionError } : {}),
           ...(r.openedTabs?.length ? { openedTabs: r.openedTabs.map(({ page, tabId, url, title, pending }) => ({ ...(page && { tab: page }), tabId, url, title, ...(pending && { pending }) })) } : {}),
           ...(r.download ? { download: r.download } : {}),
           ...(action === 'click' && r.method === 'dom' ? { method: 'dom' as const } : {}),

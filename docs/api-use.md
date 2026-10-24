@@ -3,6 +3,17 @@
 The core loop and the discipline that makes it reliable. Tool-by-tool argument shapes are in each tool's schema; error
 families are in the `errors` doc; read the full object model on demand with `docs_get {name:"api-reference"}`.
 
+For file inputs, use `tab_act {action:"upload", target:{ref:"eN"}, files:["/absolute/path/file.png"], observe:true}`.
+Hidden inputs are included in observations and do not need a layout box. Paths must exist as readable regular files
+on the MCP host and be visible at the same paths to Chrome (a shared filesystem). Remote files are not staged.
+Callers must enforce their own permitted upload directories. An exact input or associated label
+takes precedence over other inputs in the same form. `fileSelection` reports the selected names, sizes and MIME types;
+`controlState:"verified"` checks names and sizes, not server acceptance. A change handler may consume the files and
+clear the input, returning `delivery:"applied"` with `controlState:"unverified"`; inspect the page/network instead of
+replaying the action. If the post-delivery read fails, `fileSelectionError` preserves the applied outcome.
+The operation bypasses the native chooser's `accept` filtering and does not test the chooser UI,
+drag/drop, or clipboard handling. Empty `files` is rejected; clearing the selection is not part of this operation.
+
 1. **Loop:** `tab_open` (or `tab_claim` a tab the user already has) → `tab_observe` → `tab_act` → `tab_observe`. One
    `tab_act` call does everything (waits for actionable, scrolls, hit-tests, dispatches real input, settles).
 2. **Locators come from the latest observe — never guess one.** Use a `{ref:"eN"}` from the last observe, or a

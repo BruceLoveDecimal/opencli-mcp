@@ -216,7 +216,8 @@ export function resolveUpload(args: { selector: string; fallback: string | null;
   const controlled = el instanceof HTMLLabelElement && el.control instanceof HTMLInputElement && el.control.type === 'file' ? [el.control] : [];
   const nested = [...el.querySelectorAll<HTMLInputElement>('input[type=file]')];
   const inForm = el.closest('form')?.querySelectorAll<HTMLInputElement>('input[type=file]') ?? [];
-  const candidates = [...new Set([...direct, ...controlled, ...nested, ...inForm])];
+  // An exact input/label must not become ambiguous because its form has other upload widgets.
+  const candidates = direct.length ? direct : controlled.length ? controlled : nested.length ? nested : [...inForm];
   if (!candidates.length) candidates.push(...document.querySelectorAll<HTMLInputElement>('input[type=file]'));
   if (candidates.length !== 1) return { error: { code: candidates.length ? 'selector_ambiguous' : 'not_a_file_input', message: candidates.length ? 'Several file inputs are available. Target one file-input ref from tab_observe.' : 'No file input is associated with this target.' } };
   const input = candidates[0];
@@ -226,6 +227,10 @@ export function resolveUpload(args: { selector: string; fallback: string | null;
   return { ok: true, ref: ariaRefOf(input), selector: replaySelector(input), matches_n: 1 };
 }
 export function fileSelectionCount(): number { const el = actEl(); return el instanceof HTMLInputElement ? el.files?.length ?? 0 : 0; }
+export function fileSelection(): Array<{ name: string; size: number; type: string }> {
+  const el = actEl();
+  return el instanceof HTMLInputElement ? [...el.files ?? []].map(({ name, size, type }) => ({ name, size, type })) : [];
+}
 
 /** Wait until the DOM has been quiet for `quietMs` (or `maxMs` elapsed). */
 export function settle(args: SettleArgs): Promise<{ waitedMs: number; quiet: boolean }> {
@@ -642,7 +647,7 @@ export function check(args: Expectation): CheckResult {
   return { ok: failed.length === 0, failed, url: location.href, title: document.title };
 }
 
-export const api = { check, resolve, resolveUpload, fileSelectionCount, pointInfo, focus, readValue, fill, nativeSet, isChecked, select, caretToEnd, clearActMark, settle, frameProbe, clearFrameMark, aria, find, findByQuery, elementAt, annotate, unannotate, armClickProbe, readClickProbe, domClick, readText };
+export const api = { check, resolve, resolveUpload, fileSelectionCount, fileSelection, pointInfo, focus, readValue, fill, nativeSet, isChecked, select, caretToEnd, clearActMark, settle, frameProbe, clearFrameMark, aria, find, findByQuery, elementAt, annotate, unannotate, armClickProbe, readClickProbe, domClick, readText };
 export type PageApi = typeof api;
 
 (globalThis as any)[PAGE_GLOBAL] = api;
