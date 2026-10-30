@@ -16,7 +16,7 @@ import { evaluateInEngine, evaluateMain, registerFrameTracking, forgetTab as for
 import { CdpConnection, resolveEndpoint } from './connection';
 import { ChromeShim, type ShimTab } from './chrome-shim';
 
-export const FEATURES: BrowserFeature[] = ['cdp', 'network', 'frames', 'dialogs', 'console', 'viewport'];
+export const FEATURES: BrowserFeature[] = ['cdp', 'network', 'frames', 'dialogs', 'console', 'viewport', 'expect-state'];
 
 const CDP_ALLOWLIST = new Set([
   'Accessibility.enable', 'Accessibility.getFullAXTree', 'Accessibility.getPartialAXTree',

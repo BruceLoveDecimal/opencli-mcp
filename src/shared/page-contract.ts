@@ -82,5 +82,13 @@ export interface SelectResult { selected?: string[]; error?: string; available?:
 export interface ElementAtResult { matches_n: number; entries: FindEntry[] }
 
 /** What a flow expects of the page at a step; every field given must hold. */
-export interface Expectation { text?: string; notText?: string; selector?: string; ref?: string; url?: string; title?: string; visible?: boolean }
+export interface Expectation {
+  text?: string; notText?: string; selector?: string; ref?: string; url?: string; title?: string; visible?: boolean;
+  /** Element state on the selector/ref match (extension feature `expect-state`): the first visible match must hold each. */
+  value?: string; enabled?: boolean; checked?: boolean; hasText?: string;
+  /** exact number of elements the selector/ref matches */
+  count?: number;
+}
+/** Fields that need the `expect-state` extension feature. */
+export const ELEMENT_STATE_KEYS = ['value', 'enabled', 'checked', 'hasText', 'count'] as const;
 export interface CheckResult { ok: boolean; failed: string[]; url: string; title: string }

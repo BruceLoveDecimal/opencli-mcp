@@ -11,11 +11,11 @@ describe('dreamface regression suite', () => {
     const ids = suite.checks.map((check) => check.id);
     expect(new Set(ids).size).toBe(ids.length);
     const covered = new Set(suite.checks.flatMap((check) => check.adapters ?? []));
-    // login drives the page and sitemap is static; every other command calls the site's API
+    // login drives the page, sitemap is static and seed only reads the page's stored session; every other command calls the site's API
     const commands = fs.readdirSync(dir)
       .filter((file) => file.endsWith('.js') && !file.startsWith('_'))
       .map((file) => file.slice(0, -3))
-      .filter((command) => !['login', 'sitemap'].includes(command));
+      .filter((command) => !['login', 'sitemap', 'seed'].includes(command));
     expect(commands.filter((command) => !covered.has(command))).toEqual([]);
   });
 });

@@ -5,7 +5,7 @@ In `js` the globals are `agent`, `sites`, `recon`, `tools`, `session` (the membe
 ```ts
 interface AgentApi {
   agent: { browsers: { getDefault(): Promise<Browser>; }; browser: Browser; documentation: { get(name: string): string | null; }; };
-  sites: Record<string, unknown> & { search(q: string, limit?: number): Promise<unknown>; list(): unknown; enable(site: string, opts?: { write?: boolean; }): Promise<{ site: string; tools: Array<string>; }>; disable(site: string): boolean; run(site: string, name: string, args?: Record<string, unknown>): Promise<unknown>; };
+  sites: Record<string, unknown> & { search(q: string, limit?: number): Promise<unknown>; list(): unknown; enable(site: string, opts?: { write?: boolean; }): Promise<{ site: string; tools: Array<string>; }>; disable(site: string): boolean; run(site: string, name: string, args?: Record<string, unknown>, meta?: StepMeta): Promise<unknown>; };
   recon: {
     discover(tab: Tab, opts?: { maxScripts?: number; includeStatic?: boolean; includeAssets?: boolean; includeInline?: boolean; fetchTimeoutMs?: number; network?: Array<Record<string, unknown>>; }): Promise<DiscoverResult>;
   };
@@ -24,7 +24,7 @@ class Browser {
   id: "chrome";
   type: "extension";
   tabs: {
-    new(url?: string): Promise<Tab>;
+    new(url?: string, meta?: StepMeta): Promise<Tab>;
     list(): Promise<Array<{ id?: string; tabId: number; pending?: true; url?: string; title?: string; active: boolean; selected: boolean; origin: "agent" | "user"; state: "active" | "handoff"; }>>;
     get(id: string): Tab;
     selected(): Promise<Tab | undefined>;
@@ -46,7 +46,7 @@ class Browser {
 class Tab {
   tabId?: number; // Numeric Chrome tab id when claimed from a user tab; `id` is the session page handle.
   id: string;
-  goto(url: string, opts?: { waitUntil?: "load" | "none"; settleMs?: number; }): Promise<{ url: string | null; title: string | null; }>;
+  goto(url: string, opts?: { waitUntil?: "load" | "none"; settleMs?: number; } & StepMeta): Promise<{ url: string | null; title: string | null; }>;
   url(): Promise<string | null>;
   title(): Promise<string | null>;
   back(): Promise<void>;
@@ -58,12 +58,12 @@ class Tab {
   screenshot(opts?: { fullPage?: boolean; annotate?: boolean; format?: "png" | "jpeg"; quality?: number; }): Promise<ImageValue>;
   find(target: (Target & { limit?: number; }) | { query: string; limit?: number; }): Promise<FindResult | ElementAtResult | QueryFindResult>;
   read(opts?: ReadOptions): Promise<ReadTextResult>; // Linear text of a bounded document. Scrolls to mount lazy content, retains repeated text from distinct nodes, restores the scroll position. No refs. A feed that grows without a bottom returns reason `unbounded` and the head already read — do not call it again to finish the feed.
-  act(opts: ActOptions): Promise<Record<string, unknown>>; // wait + act in one call at the runtime edge: locate → wait actionable → hit-test → real input → settle. `method:'dom'` skips the mouse event.
+  act(input: ActOptions): Promise<Record<string, unknown>>; // wait + act in one call at the runtime edge: locate → wait actionable → hit-test → real input → settle. `method:'dom'` skips the mouse event.
   webmcp: { // WebMCP: tools the page itself registers via navigator.modelContext (page-provided tool source).
     list(): Promise<Array<{ name: string; description?: string; inputSchema?: unknown; }>>;
     call(name: string, input?: Record<string, unknown>): Promise<unknown>;
   };
-  expect(what: Expectation, opts?: { timeoutMs?: number; }): Promise<CheckResult>; // Assert what the page must show now (polled up to timeoutMs).
+  expect(what: Expectation, opts?: { timeoutMs?: number; } & StepMeta): Promise<CheckResult>; // Assert what the page must show now (polled up to timeoutMs).
   evaluate(js: string, opts?: { allowWrite?: boolean; frame?: number; }): Promise<unknown>; // Read-only page evaluation.
   dialog: { // Native alert/confirm/prompt dialogs block the page; commands fail with `dialog_open` until answered.
     get(): Promise<DialogInfo | null>;
@@ -97,7 +97,7 @@ type FrameStep = string | number;
 
 type ActAction = 'click' | 'dblclick' | 'hover' | 'focus' | 'fill' | 'type' | 'press' | 'select' | 'check' | 'uncheck' | 'upload' | 'drag' | 'scroll' | 'back' | 'forward' | 'reload';
 
-interface ActOptions { target?: Target; action: ActAction; value?: string; files?: string[]; to?: Target; direction?: 'up' | 'down' | 'left' | 'right'; amount?: number; timeoutMs?: number; settleMs?: number; method?: 'cdp' | 'dom' }
+interface ActOptions extends StepMeta { recordValue?: string; target?: Target; action: ActAction; value?: string; files?: string[]; to?: Target; direction?: 'up' | 'down' | 'left' | 'right'; amount?: number; timeoutMs?: number; settleMs?: number; method?: 'cdp' | 'dom' }
 
 interface ObserveOptions { mode?: 'state' | 'screenshot' | 'both'; since?: string; viewport?: boolean; ref?: string; annotate?: boolean; fullPage?: boolean }
 
@@ -125,7 +125,9 @@ interface ElementAtResult { matches_n: number; entries: FindEntry[] }
 
 interface ReadTextResult { readId: string; text: string; complete: boolean; reason?: 'budget' | 'scan_limit' | 'unbounded' | 'stale'; chars: number; start: number; nextStart?: number }
 
-interface Expectation { text?: string; notText?: string; selector?: string; ref?: string; url?: string; title?: string; visible?: boolean }
+interface Expectation {
+  text?: string; notText?: string; selector?: string; ref?: string; url?: string; title?: string; visible?: boolean; value?: string; enabled?: boolean; checked?: boolean; hasText?: string; count?: number;
+}
 
 interface CheckResult { ok: boolean; failed: string[]; url: string; title: string }
 

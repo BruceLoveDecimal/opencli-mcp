@@ -82,6 +82,7 @@ For integrations and custom workflows, the main tools are:
 | Finish a browser session | `session_finalize` |
 | Discover and run site commands | `sites_search`, `site_run` |
 | Define and verify a site adapter | `tools_define`, `tools_try`, `tools_activate` |
+| Record, replay and repair tests | `journal`, `flow_run`, `flows_list`, `tab_locator`, `network_expect`, `suite_run`, `plan_save` ([flows guide](docs/flows.md)) |
 | Run multi-step JavaScript | `js`, `js_reset` |
 | Read built-in documentation | `docs_list`, `docs_get` |
 

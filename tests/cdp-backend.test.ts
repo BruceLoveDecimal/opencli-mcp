@@ -70,6 +70,22 @@ function render() {
 media.addEventListener('change',render); render();
 </script>`;
 
+/** A small shop: state assertions, a JSON order request and a token-protected API for suite_run. */
+const SHOP = `<!doctype html><title>Shop</title>
+<ul id="items"><li class="item">Apple</li><li class="item">Banana</li><li class="item">Cherry</li></ul>
+<label>Name <input id="name" name="name"></label>
+<label><input type="checkbox" id="agree"> I agree</label>
+<button id="buy" disabled>Buy</button><p id="out"></p>
+<script>
+localStorage.setItem('auth', JSON.stringify({ token: 'tok-123' }));
+const agree = document.getElementById('agree'), buy = document.getElementById('buy');
+agree.addEventListener('change', () => { buy.disabled = !agree.checked; });
+buy.addEventListener('click', async () => {
+  const r = await fetch('/api/order', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: document.getElementById('name').value, items: 3 }) });
+  document.getElementById('out').textContent = 'Order placed ' + (await r.json()).orderId;
+});
+</script>`;
+
 /** Only the fixture's viewport changes through CDP; every page interaction still uses typed MCP tools. */
 async function resizePage(endpoint: string, url: string, width: number, height: number, existing?: WebSocket): Promise<WebSocket> {
   const pages = await (await fetch(`${endpoint}/json/list`)).json() as Array<{ url: string; webSocketDebuggerUrl: string }>;
@@ -117,6 +133,20 @@ async function startSite(): Promise<{ url: string; close: () => Promise<void> }>
       res.writeHead(flaky === 1 ? 503 : 200, { 'content-type': 'application/json' }).end(JSON.stringify({ try: flaky }));
       return;
     }
+    if (req.url === '/api/order' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ code: 0, orderId: `o-${JSON.parse(body).name}` })); });
+      return;
+    }
+    if (req.url?.startsWith('/api/items')) {
+      if (req.headers.token !== 'tok-123') { res.writeHead(401, { 'content-type': 'application/json' }).end('{"error":"login"}'); return; }
+      const items = [{ id: 'i1', name: 'Apple' }, { id: 'i2', name: 'Banana' }, { id: 'i3', name: 'Cherry' }];
+      const id = req.url.split('/')[3];
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(id ? items.find((i) => i.id === id) ?? {} : { items }));
+      return;
+    }
+    if (req.url === '/shop') { res.writeHead(200, { 'content-type': 'text/html' }).end(SHOP); return; }
     if (req.url === '/app') { res.writeHead(200, { 'content-type': 'text/html' }).end(APP); return; }
     if (req.url === '/responsive') { res.writeHead(200, { 'content-type': 'text/html' }).end(RESPONSIVE); return; }
     if (req.url === '/upload') { res.writeHead(200, { 'content-type': 'text/html' }).end(UPLOAD); return; }
@@ -230,6 +260,73 @@ describe.skipIf(!CHROME)('cdp backend', () => {
     }
   }, 60_000);
   afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
+
+  it('records a test with intents, exports it, replays it, repairs a stale step and runs the site suite', async () => {
+    const site = await startSite(); cleanup.push(site.close);
+    const chrome = await startChrome();
+    cleanup.push(async () => { chrome.proc.kill(); await new Promise((r) => chrome.proc.once('exit', r)); fs.rmSync(chrome.profile, { recursive: true, force: true, maxRetries: 5 }); });
+    const suiteDir = path.join(os.homedir(), '.opencli-mcp', 'adapters', 'shopx');
+    fs.mkdirSync(suiteDir, { recursive: true });
+    fs.writeFileSync(path.join(suiteDir, 'suite.json'), JSON.stringify({ name: 'shopx', match: ['127.0.0.1'], page: '/shop', session: { token: 'localStorage:auth#token' }, secrets: ['token'], headers: { token: '${token}' }, checks: [
+      { id: 'items', path: '/api/items', expect: [{ path: 'items', minItems: 3 }, { path: 'items[*].id', type: 'string' }], capture: { firstId: 'items[0].id' }, adapters: ['items'] },
+      { id: 'item', path: '/api/items/${firstId}', expect: [{ path: 'id', equals: '${firstId}' }, { path: 'name', equals: 'Apple' }], adapters: ['item'] },
+    ] }));
+    cleanup.push(() => fs.rmSync(suiteDir, { recursive: true, force: true }));
+    const transport = new StdioClientTransport({ command: process.execPath, args: ['--import', 'tsx', path.resolve('src/main.ts'), 'cdp', '--endpoint', chrome.endpoint, '--allow-origin', site.url], stderr: 'ignore' });
+    const client = new Client({ name: 'flow-test', version: '1' }, { capabilities: {} });
+    await client.connect(transport); cleanup.push(() => client.close());
+    const call = async (name: string, args: Record<string, unknown>) => parse(await client.callTool({ name, arguments: args }));
+
+    const opened = await call('tab_open', { url: `${site.url}/shop`, intent: 'open the shop', step: '1' });
+    const tab = opened.tab as string;
+    expect(await call('tab_expect', { selector: '#buy', enabled: false, intent: 'buy starts disabled', step: '1' })).toMatchObject({ ok: true });
+    expect(await call('tab_expect', { selector: 'li.item', count: 3, intent: 'three items', step: '1' })).toMatchObject({ ok: true });
+    expect(await call('tab_expect', { selector: '#items', hasText: 'Banana', timeout: 1 })).toMatchObject({ ok: true });
+    expect(await call('tab_expect', { selector: 'li.item', count: 2, timeout: 1 })).toMatchObject({ ok: false, error: { code: 'expectation_failed' } });
+    expect(await call('tab_act', { action: 'fill', target: { label: 'Name' }, value: 'Ada', intent: 'enter the name', step: '2' })).toMatchObject({ ok: true, verified: true });
+    expect(await call('tab_expect', { selector: '#name', value: 'Ada', intent: 'name kept', step: '2' })).toMatchObject({ ok: true });
+    expect(await call('tab_act', { action: 'check', target: { role: 'checkbox', name: 'I agree' }, intent: 'accept the terms', step: '2' })).toMatchObject({ ok: true });
+    expect(await call('tab_expect', { selector: '#agree', checked: true, intent: 'terms accepted', step: '2' })).toMatchObject({ ok: true });
+    const state = await call('tab_observe', {});
+    const buyRef = /button "Buy".*?\[ref=(e\d+)\]/.exec(String(state.state))![1];
+    const bought = await call('tab_act', { action: 'click', target: { ref: buyRef }, intent: 'buy', step: '3' });
+    expect(bought.ok, JSON.stringify(bought)).toBe(true);
+    const order = await call('network_expect', { url: '/api/order', method: 'POST', afterSequence: (bought.network as { afterSequence: number }).afterSequence, request: [{ path: 'name', equals: 'Ada' }], response: [{ path: 'orderId', equals: 'o-Ada' }], intent: 'order sent', step: '3' });
+    expect(order, JSON.stringify(order)).toMatchObject({ ok: true, method: 'POST', status: 200 });
+    expect(await call('tab_expect', { text: 'Order placed o-Ada', intent: 'confirmation', step: '3' })).toMatchObject({ ok: true });
+
+    const exported = await call('journal', { action: 'export', name: 'shop buy', case: '1.1', save: true });
+    const flow = exported.flow as { steps: Array<Record<string, unknown>> };
+    expect(flow.steps.map((st) => st.intent)).toEqual(['open the shop', 'buy starts disabled', 'three items', undefined, 'enter the name', 'name kept', 'accept the terms', 'terms accepted', 'buy', 'order sent', 'confirmation']);
+    expect(JSON.stringify(flow)).not.toMatch(/"ref"|\be\d+\b/);
+    expect(flow.steps[8]).toMatchObject({ do: 'act', action: 'click', target: { selector: expect.stringContaining('Buy') } });
+    const spec = await call('journal', { action: 'export', name: 'shop buy', format: 'playwright' });
+    expect(spec.code).toContain("await expect(page.locator('li.item')).toHaveCount(3");
+    expect(spec.code).toContain('.toBeChecked(');
+
+    // replay in a fresh tab opened by the flow's first goto
+    const replay = await call('flow_run', { name: 'shop buy' });
+    expect(replay, JSON.stringify(replay)).toMatchObject({ ok: true, status: 'passed' });
+    expect(replay.tab).not.toBe(tab);
+
+    // a stale locator pauses the run on the live page; repair it by hand with the same intent and continue
+    const stale = { ...flow, steps: flow.steps.map((st, i) => i === 8 ? { ...st, target: { selector: 'internal:role=button[name="Purchase"i]' } } : st) };
+    const paused = await call('flow_run', { flow: stale, stepTimeout: 2 });
+    expect(paused, JSON.stringify(paused).slice(0, 2000)).toMatchObject({ ok: true, status: 'paused', failedAt: 8, resume: { from: 9, retry: 8 } });
+    expect(String((paused.page as { state: string }).state)).toContain('button "Buy"');
+    const locators = await call('tab_locator', { tab: paused.tab, target: { role: 'button', name: 'Buy' } });
+    expect(locators.recommended, JSON.stringify(locators)).toMatchObject({ kind: 'id', selector: '#buy', unique: true, sameElement: true });
+    expect(await call('tab_act', { tab: paused.tab, action: 'click', target: { selector: '#buy' }, intent: 'buy', step: '3' })).toMatchObject({ ok: true });
+    const resumed = await call('flow_run', { flow: stale, tab: paused.tab, from: 9 });
+    expect(resumed, JSON.stringify(resumed).slice(0, 2000)).toMatchObject({ ok: true, status: 'passed' });
+    const healed = await call('journal', { action: 'export', name: 'shop buy healed', since: paused.journalFrom });
+    expect((healed.flow as { steps: Array<{ target?: { selector?: string } }> }).steps[8].target).toEqual({ selector: '#buy' });
+
+    const suite = await call('suite_run', { site: 'shopx', origin: site.url });
+    expect(suite, JSON.stringify(suite)).toMatchObject({ ok: true, suite: 'shopx', passed: 2, failed: 0, skipped: 0, affectedAdapters: [] });
+    const plan = await call('plan_save', { fileName: 'shop', plan: { name: 'Shop', overview: 'Buying', suites: [{ name: 'Buy', cases: [{ id: '1.1', title: 'Buy with terms', steps: [{ id: '1', perform: 'Open the shop', expect: [{ kind: 'page', text: 'Buy is disabled' }] }] }] }] } });
+    expect(String((plan.files as { markdown: string }).markdown)).toMatch(/plans[/\\]shop\.md$/);
+  }, 90_000);
 
   it('drives a headless Chrome through the MCP tools, captures its requests and keeps it on allowed origins', async () => {
     const site = await startSite();

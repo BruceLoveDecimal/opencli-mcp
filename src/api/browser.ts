@@ -5,6 +5,7 @@
 import type { RuntimePage } from '../backends/page-types.js';
 import type { CloseUserTabsResult } from '../protocol.js';
 import type { ExtensionRuntimePage, UserTabInfo } from '../backends/extension-page.js';
+import type { StepMeta } from '../flows/journal.js';
 import { ActionError } from './errors.js';
 import { buildInstructions, readDocForContext, type DocContext } from '../docs/manifest.js';
 import { BROWSER_CAPABILITIES } from '../docs/surface.js';
@@ -20,7 +21,8 @@ export class Browser {
   }
 
   readonly tabs = {
-    new: async (url?: string): Promise<Tab> => {
+    new: async (url?: string, meta: StepMeta = {}): Promise<Tab> => {
+      const started = Date.now();
       const page = await this.page();
       if (url && !/^(https?:\/\/|data:text\/html)/i.test(url)) throw new ActionError('invalid_url', 'Only http(s) (or data:text/html) URLs can be opened', 'Pass an absolute http:// or https:// URL.');
       const id = await page.newTab(url); // the extension creates the tab and waits for its first load
@@ -32,6 +34,7 @@ export class Browser {
         // another extension may have taken the navigation over (interstitial, redirect to its own page): say so, do not hand out a tab the debugger cannot attach to
         const landed = await tab.url().catch(() => null);
         if (landed && /^(chrome-extension|chrome-error|chrome):/.test(landed)) { await tab.close().catch(() => {}); throw new ActionError('page_not_loaded', `navigation to ${url} ended on ${landed}`, 'Another Chrome extension intercepted this site (redirect or interstitial); disable it for this site or open the page manually and claim the tab.'); }
+        this.ctx.state.journal?.add({ tab: id, ...meta, ok: true, ms: Date.now() - started, record: { do: 'goto', url } });
       }
       return tab;
     },

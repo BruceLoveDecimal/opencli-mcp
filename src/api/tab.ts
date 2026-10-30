@@ -8,11 +8,14 @@ import { ariaDiff } from './diff.js';
 import { networkDetail, networkSummary } from './network.js';
 import { ARIA_BUDGET, collapseAria } from '../shared/aria-collapse.js';
 import { targetToSelector, fallbackSelector } from '../shared/engine.js';
-import type { FindEntry, FindResult, QueryFindResult, ElementAtResult, Expectation, CheckResult, ReadTextResult } from '../shared/page-contract.js';
+import { ELEMENT_STATE_KEYS, type FindEntry, type FindResult, type QueryFindResult, type ElementAtResult, type Expectation, type CheckResult, type ReadTextResult } from '../shared/page-contract.js';
 import type { DialogInfo, DownloadWaitResult, FrameStep } from '../protocol.js';
 import type { SessionContext } from './context.js';
 import { pageRequest, type PageRequestOptions, type PageResponse } from './page-request.js';
 import { inspectUploadFiles } from './upload-files.js';
+import { journaled, type StepMeta } from '../flows/journal.js';
+import type { WebStep } from '../flows/schema.js';
+import type { ActResult } from '../protocol.js';
 
 export type Target = ({ frame?: FrameStep | FrameStep[]; /** container (css/selector/eN) to resolve inside */ within?: string }) & (
   | { ref: number | string }
@@ -22,7 +25,7 @@ export type Target = ({ frame?: FrameStep | FrameStep[]; /** container (css/sele
 
 export type ActAction = 'click' | 'dblclick' | 'hover' | 'focus' | 'fill' | 'type' | 'press' | 'select' | 'check' | 'uncheck' | 'upload' | 'drag' | 'scroll' | 'back' | 'forward' | 'reload';
 
-export interface ActOptions { target?: Target; action: ActAction; value?: string; files?: string[]; to?: Target; direction?: 'up' | 'down' | 'left' | 'right'; amount?: number; timeoutMs?: number; settleMs?: number; /** click only. `dom` runs HTMLElement.click() and sends no mouse event. Default is a real mouse event. */ method?: 'cdp' | 'dom' }
+export interface ActOptions extends StepMeta { /** what the journal records as value (a flow's ${placeholder}) instead of the typed value */ recordValue?: string; target?: Target; action: ActAction; value?: string; files?: string[]; to?: Target; direction?: 'up' | 'down' | 'left' | 'right'; amount?: number; timeoutMs?: number; settleMs?: number; /** click only. `dom` runs HTMLElement.click() and sends no mouse event. Default is a real mouse event. */ method?: 'cdp' | 'dom' }
 
 export interface ObserveOptions { mode?: 'state' | 'screenshot' | 'both'; /** Return a diff only against this exact snapshot id; otherwise return the full state. */ since?: string; /** only the subtree on screen right now (what a screenshot shows). Not a page of the full tree. */ viewport?: boolean; /** open one branch of the action map (`eN` from a collapsed line). Ignores viewport. */ ref?: string; /** overlay eN labels on the screenshot */ annotate?: boolean; fullPage?: boolean }
 
@@ -31,6 +34,10 @@ export interface ReadOptions { /** stop after this many characters. Default 6000
 export interface ImageValue { __image: true; mimeType: string; base64: string }
 
 
+
+type FlowTarget = NonNullable<Extract<WebStep, { do: 'act' }>['target']>;
+const REF_RE = /^e\d+$/;
+const CREDENTIAL_HINT = /pass(word)?|passwd|pwd|otp|one-time|验证码|密码|口令/i;
 
 const WRITE_EVAL_RE = /(\.click\s*\(|\.submit\s*\(|\blocation\s*(=|\.href\s*=|\.assign\s*\(|\.replace\s*\()|document\.write|\.remove\s*\(\)|localStorage\.(setItem|removeItem|clear)|\.value\s*=[^=])/;
 
@@ -57,13 +64,15 @@ export class Tab {
     } finally { release(); }
   }
 
-  async goto(url: string, opts: { waitUntil?: 'load' | 'none'; settleMs?: number } = {}): Promise<{ url: string | null; title: string | null }> {
+  async goto(url: string, opts: { waitUntil?: 'load' | 'none'; settleMs?: number } & StepMeta = {}): Promise<{ url: string | null; title: string | null }> {
     if (!/^(https?:\/\/|data:text\/html)/i.test(url)) throw new ActionError('invalid_url', 'Only http(s) (or data:text/html) URLs can be opened', 'Pass an absolute http:// or https:// URL');
-    return this.use(async (page) => {
-      await page.goto(url, opts);
+    const { intent, step, ...load } = opts;
+    const record: WebStep = { do: 'goto', url };
+    return journaled(this.ctx.state.journal, { tab: this.id, intent, step }, () => this.use(async (page) => {
+      await page.goto(url, load);
       await this.harvest(page);
       return this.info(page);
-    });
+    }), () => ({ record }), record);
   }
 
   /**
@@ -175,9 +184,12 @@ export class Tab {
   }
 
   /** wait + act in one call at the runtime edge: locate → wait actionable → hit-test → real input → settle. `method:'dom'` skips the mouse event. */
-  async act(opts: ActOptions): Promise<Record<string, unknown>> {
+  async act(input: ActOptions): Promise<Record<string, unknown>> {
+    const { intent, step, recordValue: _recordValue, ...requested } = input;
+    let opts: ActOptions = requested;
     const { action } = opts;
-    return this.use(async (page) => {
+    let recorded: { record: WebStep | null; note?: string } = { record: null, note: 'no record' };
+    return journaled(this.ctx.state.journal, { tab: this.id, intent, step }, () => this.use(async (page) => {
       try {
         const capture = this.ctx.rt.hasFeature('network');
         if (capture) await this.harvest(page);
@@ -186,6 +198,7 @@ export class Tab {
         if (action === 'back' || action === 'forward' || action === 'reload') {
           const h = await page.history(action);
           if (capture) await this.harvest(page);
+          recorded = { record: { do: 'act', action } };
           return { action, ...h, delivery: 'applied', controlState: 'unverified', ...(capture && { network: { afterSequence: networkFrom, cursor: this.ctx.state.netLog.get(this.id)?.seq ?? networkFrom } }) };
         }
         if (action === 'scroll' && !opts.target) {
@@ -197,6 +210,7 @@ export class Tab {
         const uploadFiles = action === 'upload' ? await inspectUploadFiles(opts.files) : undefined;
         const r = await page.act({ kind: action, target: opts.target as Record<string, unknown>, value: opts.value, files: opts.files, to: opts.to as Record<string, unknown> | undefined, direction: opts.direction, amount: opts.amount, timeoutMs: opts.timeoutMs, settleMs: opts.settleMs ?? 600, cursor: this.ctx.rt.cursorEnabled, ...(opts.method ? { method: opts.method } : {}) });
         if (capture) await this.harvest(page);
+        recorded = await this.actRecord(page, input, r).catch((err) => ({ record: null, note: `record failed: ${(err as Error).message}` }));
         const delivery = r.method === 'dom' || ['fill', 'check', 'uncheck', 'select', 'upload', 'focus'].includes(action) ? 'applied' : action === 'click' || action === 'dblclick' ? 'received' : 'dispatched';
         const controlVerified = uploadFiles
           ? r.fileSelection?.length === uploadFiles.length && r.fileSelection.every((file, index) => file.name === uploadFiles[index].name && file.size === uploadFiles[index].size)
@@ -225,7 +239,44 @@ export class Tab {
         const e = err as { code?: string; message?: string; hint?: string; data?: unknown };
         throw new ActionError(e.code ?? 'action_failed', e.message ?? String(err), e.hint, e.data && typeof e.data === 'object' ? e.data as Record<string, unknown> : undefined);
       }
-    });
+    }), () => recorded);
+  }
+
+  /**
+   * The act as a replayable flow step, never with a snapshot ref: a locator the agent chose is kept as given; a ref
+   * (or a ref scope) becomes the engine's generated selector for the element acted on.
+   */
+  private async actRecord(page: RuntimePage, opts: ActOptions, r: ActResult): Promise<{ record: WebStep | null; note?: string }> {
+    const durable = (t: Target | undefined, generated?: string): FlowTarget | null => {
+      if (!t) return null;
+      const byRef = 'ref' in t || (t.within !== undefined && REF_RE.test(t.within));
+      if (!byRef) return { ...t } as FlowTarget;
+      if (!generated) return null;
+      const frame = 'frame' in t ? t.frame : undefined;
+      return { selector: generated, ...(frame !== undefined && { frame }) };
+    };
+    const target = durable(opts.target, r.selector);
+    if (opts.target && !target) return { record: null, note: 'target was a snapshot ref and the engine generated no selector for it' };
+    const to = opts.to ? durable(opts.to) : undefined;
+    if (opts.to && !to) return { record: null, note: 'drag destination was a snapshot ref; act on a role/label/text/selector destination to record it' };
+    let value = opts.recordValue ?? opts.value;
+    if (opts.recordValue === undefined && value !== undefined && (opts.action === 'fill' || opts.action === 'type') && target) {
+      const secret = await this.credentialName(page, target).catch(() => null);
+      if (secret) value = `\${${secret}}`;
+    }
+    return { record: { do: 'act', action: opts.action, ...(target && { target }), ...(to && { to }), ...(value !== undefined && { value }), ...(opts.files && { files: opts.files }), ...(opts.direction && { direction: opts.direction }), ...(opts.amount !== undefined && { amount: opts.amount }), ...(opts.method && { method: opts.method }) } };
+  }
+
+  /** A credential field's variable name: its typed value must not enter a flow. */
+  private async credentialName(page: RuntimePage, target: FlowTarget): Promise<string | null> {
+    const selector = target.selector ?? targetToSelector(target as Record<string, unknown>);
+    if (!selector || target.frame !== undefined) return selector && CREDENTIAL_HINT.test(selector) ? 'password' : null;
+    const found = await page.pageCall('find', { selector, fallback: null, limit: 1 }) as FindResult;
+    const e = found.entries[0];
+    if (!e) return null;
+    const a = e.attrs;
+    if (a.type !== 'password' && !CREDENTIAL_HINT.test([a.name, a.id, a.placeholder, a['aria-label'], a.autocomplete, e.name].filter(Boolean).join(' '))) return null;
+    return (a.name || a.id || 'password').replace(/\W+/g, '_');
   }
 
   /** WebMCP: tools the page itself registers via navigator.modelContext (page-provided tool source). */
@@ -240,11 +291,26 @@ export class Tab {
   };
 
   /** Assert what the page must show now (polled up to timeoutMs). */
-  async expect(what: Expectation, opts: { timeoutMs?: number } = {}): Promise<CheckResult> {
-    return this.use(async (page) => {
-      try { return await page.expect(what, opts); }
+  async expect(what: Expectation, opts: { timeoutMs?: number } & StepMeta = {}): Promise<CheckResult> {
+    const { intent, step, timeoutMs } = opts;
+    const needs = ELEMENT_STATE_KEYS.filter((k) => what[k] !== undefined);
+    if (needs.length && !this.ctx.rt.hasFeature('expect-state')) throw new ActionError('capability_unavailable', `The connected extension cannot check ${needs.join(', ')}.`, 'Update the Chrome extension to the version packaged with this host, then reload it.');
+    const timeout = timeoutMs !== undefined ? timeoutMs / 1000 : undefined;
+    const { ref, ...rest } = what;
+    const asStep = (expect: Expectation): WebStep => ({ do: 'expect', expect, ...(timeout !== undefined && { timeout }) } as WebStep);
+    let recorded: { record: WebStep | null; note?: string } = { record: ref ? null : asStep(rest) };
+    return journaled(this.ctx.state.journal, { tab: this.id, intent, step }, () => this.use(async (page) => {
+      let result: CheckResult;
+      try { result = await page.expect(what, { timeoutMs }); }
       catch (err) { const e = err as { code?: string; message?: string; hint?: string; extra?: Record<string, unknown> }; throw new ActionError(e.code ?? 'expectation_failed', e.message ?? String(err), e.hint, e.extra); }
-    });
+      if (ref) {
+        // a ref holds for one snapshot only: record the element's generated selector instead
+        const found = await page.pageCall('find', { selector: `aria-ref=${ref}`, fallback: null, limit: 1 }).catch(() => null) as FindResult | null;
+        const selector = found?.entries[0]?.selector;
+        recorded = selector ? { record: asStep({ ...rest, selector }) } : { record: null, note: 'ref has no generated selector; expect a selector or role to record it' };
+      }
+      return result;
+    }), () => recorded, recorded.record);
   }
 
   /** Read-only page evaluation. */

@@ -13,6 +13,20 @@ import { argsToShape, argSpec, coerceArgs } from '../sites/schema.js';
 import { listDefinedTools } from '../sites/define.js';
 import { checkActInput, checkExpect, type ActToolInput } from './act-input.js';
 import { actionSchema, targetSchema } from './action-schema.js';
+import { siteRecord, journaled, type StepMeta } from '../flows/journal.js';
+import { flowToPlaywright } from '../flows/playwright.js';
+import { networkMatchSchema, planMarkdown, planSchema, webFlowSchema, webSeedSchema, type WebFlow } from '../flows/schema.js';
+import { runFlow } from '../flows/runner.js';
+import { networkExpect } from '../flows/network-expect.js';
+import { locatorCandidates } from '../flows/locator.js';
+import { parseSuite, runSuite } from '../flows/suite.js';
+import { flowsDir, listSavedFlows, plansDir, readSavedFlow, safeName, writeFile } from '../flows/store.js';
+
+/** Optional on every recorded step: what the call does in test terms. */
+const stepMeta = {
+  intent: z.string().max(300).optional().describe('the test step this call performs (e.g. the plan step text); recorded in the journal'),
+  step: z.string().max(40).optional().describe('case step id, e.g. "2"'),
+};
 
 type Content = Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>;
 type ToolResult = { content: Content; structuredContent?: Record<string, unknown>; isError?: boolean };
@@ -70,12 +84,20 @@ export function createMcpServer(rt: Runtime, sessionId: string, opts: { version?
     const m = (ctx as { mcpReq?: { signal?: AbortSignal; _meta?: { progressToken?: string | number }; notify?: (n: unknown) => Promise<void> } }).mcpReq ?? {};
     return { signal: m.signal, _meta: m._meta, sendNotification: m.notify ? (n) => m.notify!(n) : undefined };
   };
-  /** Run a long site command with progress heartbeats (when the host passed a progressToken) and cancellation. */
-  const runSiteWithProgress = async (site: string, command: string, args: Record<string, unknown>, extra: Extra): Promise<ToolResult> => {
+  /** Run a long site command with progress heartbeats (when the host passed a progressToken) and cancellation; journaled. */
+  const runSiteWithProgress = async (site: string, command: string, args: Record<string, unknown>, extra: Extra, meta: StepMeta = {}): Promise<ToolResult> => {
+    const r = await siteCall(site, command, args, extra, meta);
+    return ok(r.rows !== undefined ? { rows: r.rows, ...(r.nextCursor ? { nextCursor: r.nextCursor } : {}) } : { value: r.value });
+  };
+  const siteCall = async (site: string, command: string, args: Record<string, unknown>, extra: Extra, meta: StepMeta = {}): Promise<{ rows?: unknown[]; nextCursor?: unknown; value?: unknown }> => {
     const cmd = await rt.registry.resolve(site, command);
     const coerced = coerceArgs(cmd.args, args);
-    const token = extra._meta?.progressToken;
     const started = Date.now();
+    const journal = (ok: boolean, error?: { code: string; message: string }): void => {
+      const { record, note } = siteRecord(site, command, coerced, cmd.access);
+      state.journal?.add({ ...meta, ok, ms: Date.now() - started, record, ...(note && { note }), ...(error && { error }) });
+    };
+    const token = extra._meta?.progressToken;
     let beat: NodeJS.Timeout | undefined;
     if (token !== undefined && extra.sendNotification) {
       beat = setInterval(() => { void extra.sendNotification!({ method: 'notifications/progress', params: { progressToken: token, progress: Math.round((Date.now() - started) / 1000), message: `${site} ${command} running (${Math.round((Date.now() - started) / 1000)}s)` } }).catch(() => {}); }, 5000);
@@ -84,9 +106,11 @@ export function createMcpServer(rt: Runtime, sessionId: string, opts: { version?
       const r = await rt.runSite(site, command, coerced, { signal: extra.signal });
       if (!r.ok) {
         const { code, message, hint, ...restErr } = r.error;
-        return fail(new ActionError(code, message, hint, { site, command, ...restErr }));
+        journal(false, { code, message: String(message).slice(0, 500) });
+        throw new ActionError(code, message, hint, { site, command, ...restErr });
       }
-      return ok(r.rows !== undefined ? { rows: r.rows, ...(r.nextCursor && { nextCursor: r.nextCursor }) } : { value: r.value });
+      journal(true);
+      return r.rows !== undefined ? { rows: r.rows, ...(r.nextCursor && { nextCursor: r.nextCursor }) } : { value: r.value };
     } finally { if (beat) clearInterval(beat); }
   };
   // ── the entry surface: the few typed tools for the core loop; everything else lives in the object model behind `js` ──
@@ -104,22 +128,22 @@ export function createMcpServer(rt: Runtime, sessionId: string, opts: { version?
     inputSchema: { user: z.boolean().default(false).describe('also list user tabs available to claim'), query: z.string().optional().describe('filter user tabs by title or URL'), limit: z.number().int().min(1).max(100).default(20).describe('maximum user tabs returned') }, annotations: { readOnlyHint: true },
   }, async ({ user, query, limit }) => run(async () => { const b = await api.agent.browsers.getDefault(); return ok({ tabs: await b.tabs.list(), ...(user ? { userTabs: await b.user.openTabs({ query, limit }) } : {}) }); }));
   server.registerTool('tab_open', { title: 'Open a tab', description: 'Open a URL in a new agent tab (background, in this session’s tab group) and return its id plus the initial page state.',
-    inputSchema: { url: z.string().optional().describe('http(s) URL, or data:text/html,… for a scratch page'), observe: z.boolean().default(true), session: z.string().min(1).max(60).optional().describe('name this browser session (short, emoji-prefixed; becomes the Chrome tab-group title) — give it with the first tab') },
+    inputSchema: { url: z.string().optional().describe('http(s) URL, or data:text/html,… for a scratch page'), observe: z.boolean().default(true), session: z.string().min(1).max(60).optional().describe('name this browser session (short, emoji-prefixed; becomes the Chrome tab-group title) — give it with the first tab'), ...stepMeta },
     annotations: { openWorldHint: true },
-  }, async ({ url, observe, session: sessionName }) => run(async () => {
+  }, async ({ url, observe, session: sessionName, intent, step }) => run(async () => {
     const b = await api.agent.browsers.getDefault();
     if (sessionName) await b.nameSession(sessionName);
-    const tab = await b.tabs.new(url);
+    const tab = await b.tabs.new(url, { intent, step });
     if (!observe) return ok({ tab: tab.id, url });
     const { data, images } = stripImage({ tab: tab.id, ...(await tab.observe()) });
     return ok(data, images);
   }));
   server.registerTool('tab_goto', { title: 'Navigate a tab', description: 'Load a URL in an existing session tab and return the new page state (observe:false returns only url and title). Use tab_open for a new tab.',
-    inputSchema: { tab: z.string().optional().describe('required when the session has more than one tab'), url: z.string().describe('http(s) URL'), observe: z.boolean().default(true) },
+    inputSchema: { tab: z.string().optional().describe('required when the session has more than one tab'), url: z.string().describe('http(s) URL'), observe: z.boolean().default(true), ...stepMeta },
     annotations: { openWorldHint: true },
-  }, async ({ tab, url, observe }) => run(async () => {
+  }, async ({ tab, url, observe, intent, step }) => run(async () => {
     const t = await tabOf(tab);
-    const page = await t.goto(url);
+    const page = await t.goto(url, { intent, step });
     if (!observe) return ok({ tab: t.id, ...page });
     const { data, images } = stripImage({ tab: t.id, ...(await t.observe()) });
     return ok(data, images);
@@ -218,10 +242,10 @@ export function createMcpServer(rt: Runtime, sessionId: string, opts: { version?
     inputSchema: actionSchema,
     annotations: { destructiveHint: true, openWorldHint: true },
   }, async (input) => run(async () => {
-    const { tab, action, target, to, observe, value, files, direction, amount, settleMs, method } = input as unknown as ActToolInput & { tab?: string; observe?: boolean; settleMs?: number };
+    const { tab, action, target, to, observe, value, files, direction, amount, settleMs, method, intent, step } = input as unknown as ActToolInput & StepMeta & { tab?: string; observe?: boolean; settleMs?: number };
     const checked = checkActInput({ action: action as ActAction, target, to, value, files, direction, amount, method });
     const t = await tabOf(tab);
-    const r = await t.act({ action: action as ActAction, target: checked.target, to: checked.to, value, files, direction, amount, settleMs, method: checked.method });
+    const r = await t.act({ action: action as ActAction, target: checked.target, to: checked.to, value, files, direction, amount, settleMs, method: checked.method, intent, step });
     if (!observe) return ok({ tab: t.id, ...r });
     try {
       const { data, images } = stripImage({ tab: t.id, ...r, after: await t.observe() });
@@ -231,11 +255,107 @@ export function createMcpServer(rt: Runtime, sessionId: string, opts: { version?
       return ok({ tab: t.id, ...r, observationError: errorEnvelope(error).error, hint: 'Action already delivered. Observe read-only for the current state; do not replay the action.' });
     }
   }));
-  server.registerTool('tab_expect', { title: 'Expect', description: 'Assert what the page must show now. At least one of text / notText / url / title / selector / ref is required (visible:false requires absence, and needs selector or ref). Polls up to timeout seconds; fails with expectation_failed.', inputSchema: { tab: z.string().optional().describe('required when the session has more than one tab'), text: z.string().optional(), notText: z.string().optional(), url: z.string().optional(), title: z.string().optional(), selector: z.string().optional(), ref: z.string().optional(), visible: z.boolean().optional().describe('with selector or ref; false requires absence'), timeout: z.number().default(5) }, annotations: { readOnlyHint: true } }, async ({ tab, timeout, ...what }) => run(async () => { checkExpect(what); const t = await tabOf(tab); return ok({ tab: t.id, ...(await t.expect(what, { timeoutMs: timeout * 1000 })) }); }));
+  server.registerTool('tab_expect', { title: 'Expect', description: 'Assert what the page must show now. At least one of text / notText / url / title / selector / ref is required (visible:false requires absence, and needs selector or ref). value, count, enabled, checked and hasText check the selector/ref match (count: exact number of matches; the others: the first visible match). Polls up to timeout seconds; fails with expectation_failed.',
+    inputSchema: { tab: z.string().optional().describe('required when the session has more than one tab'), text: z.string().optional(), notText: z.string().optional(), url: z.string().optional(), title: z.string().optional(), selector: z.string().optional(), ref: z.string().optional(), visible: z.boolean().optional().describe('with selector or ref; false requires absence'),
+      value: z.string().optional().describe('input/textarea/contenteditable value equals'), count: z.number().int().min(0).optional().describe('exact number of matching elements'), enabled: z.boolean().optional(), checked: z.boolean().optional(), hasText: z.string().optional().describe('element text includes'),
+      timeout: z.number().default(5), ...stepMeta }, annotations: { readOnlyHint: true } },
+    async ({ tab, timeout, intent, step, ...what }) => run(async () => { checkExpect(what); const t = await tabOf(tab); return ok({ tab: t.id, ...(await t.expect(what, { timeoutMs: timeout * 1000, intent, step })) }); }));
+
+  // ── flows: journal, replay, locators, network assertions, suites, plans ──
+  server.registerTool('journal', { title: 'Step journal', description: 'This session\'s recorded steps (tab_open/goto/act/expect, site_run, network_expect, flow_run), each with its intent and a replayable form that uses durable locators, never eN refs. read: entries after since. export: a flow of the successful replayable steps (format flow) or a @playwright/test spec (format playwright); save:true also writes it under ~/.opencli-mcp/flows/. clear: empty it.',
+    inputSchema: { action: z.enum(['read', 'export', 'clear']).default('read'), since: z.number().int().min(0).optional().describe('journal cursor (e.g. journalFrom of flow_run); only later entries'), limit: z.number().int().min(1).max(1000).default(100),
+      format: z.enum(['flow', 'playwright']).default('flow'), name: z.string().max(120).optional().describe('flow name (export)'), case: z.string().optional().describe('plan case id the flow implements'), site: z.string().optional(), seed: webSeedSchema.optional(), save: z.boolean().default(false) },
+  }, async ({ action, since, limit, format, name, case: caseId, site, seed, save }) => run(async () => {
+    const journal = state.journal;
+    if (!journal) throw new ActionError('journal_unavailable', 'This session keeps no journal.');
+    if (action === 'clear') return ok({ cleared: journal.clear(), cursor: journal.cursor });
+    if (action === 'read') return ok(journal.read({ since, limit }));
+    if (!name) throw new ActionError('invalid_args', 'export needs name.', 'Name the flow after the case or task, e.g. "ai-image-generate".');
+    const { flow, skipped } = journal.toFlow({ name, since, case: caseId, site, seed });
+    if (!flow.steps.length) throw new ActionError('journal_empty', 'No successful replayable steps to export.', 'Perform the steps with tab_act/tab_expect (pass intent), then export; journal read shows why steps were skipped.', { details: { skipped } });
+    const text = format === 'playwright' ? flowToPlaywright(flow) : `${JSON.stringify(flow, null, 2)}\n`;
+    const file = save ? writeFile(flowsDir(), `${safeName(name)}${format === 'playwright' ? '.spec.ts' : '.flow.json'}`, text) : undefined;
+    return ok({ format, ...(format === 'flow' ? { flow } : { code: text }), steps: flow.steps.length, skipped, ...(file && { file }), cursor: journal.cursor });
+  }));
+
+  const loadFlow = (flow: unknown, name?: string): WebFlow => {
+    if ((flow === undefined) === (name === undefined)) throw new ActionError('invalid_args', 'Pass exactly one of flow or name.');
+    const parsed = webFlowSchema.safeParse(flow ?? readSavedFlow(name!));
+    if (!parsed.success) throw new ActionError('invalid_flow', 'The flow does not match the flow format.', 'docs_get {name:"flows"} describes it.', { details: { issues: parsed.error.issues.slice(0, 10).map((i) => ({ path: i.path.join('.'), message: i.message })) } });
+    return parsed.data;
+  };
+  server.registerTool('flow_run', { title: 'Replay a flow', description: 'Replay a recorded web flow (flow object or a saved name) step by step with the same engine as tab_act/tab_expect. On a failing step the run pauses: the tab stays in the session and the result has the error, page state, console errors, recent requests and resume {from, retry}. Repair with the usual tools (the step\'s intent keeps the journal aligned), then call again with from. Write site commands pause with write_blocked unless allowWrites. Replayed steps are journaled; journal export {since: journalFrom} returns the repaired flow.',
+    inputSchema: { flow: z.unknown().optional().describe('flow object (see docs flows)'), name: z.string().optional().describe('saved flow name'), tab: z.string().optional().describe('existing session tab to run in; default: the seed url or first goto opens one'),
+      from: z.number().int().min(0).optional(), until: z.number().int().min(0).optional(), allowWrites: z.boolean().default(false), skipSeed: z.boolean().default(false),
+      vars: z.record(z.string(), z.unknown()).default({}).describe('values for ${name} placeholders (masked credentials, ids)'), stepTimeout: z.number().min(1).max(120).optional().describe('seconds per step (default 10)') },
+    annotations: { destructiveHint: true, openWorldHint: true },
+  }, async ({ flow, name, tab, from, until, allowWrites, skipSeed, vars, stepTimeout }, ctx) => run(async () => {
+    const f = loadFlow(flow, name);
+    const b = await api.agent.browsers.getDefault();
+    const extra = ctxExtra(ctx);
+    const report = await runFlow(f, {
+      openTab: (url, meta) => b.tabs.new(url, meta),
+      runSite: async (site, command, args, meta) => { const r = await siteCall(site, command, args, extra, meta); return r.rows !== undefined ? { rows: r.rows } : r.value; },
+      access: async (site, command) => (await rt.registry.resolve(site, command).catch(() => undefined))?.access,
+      journal: state.journal, signal: extra.signal,
+    }, { tab: tab ? b.tabs.get(tab) : undefined, from, until, allowWrites, skipSeed, vars, stepTimeoutMs: stepTimeout !== undefined ? stepTimeout * 1000 : undefined });
+    return report.status === 'passed' ? ok(report) : { ...ok(report), isError: true };
+  }));
+  server.registerTool('flows_list', { title: 'List saved flows', description: 'Names of flows saved with journal export save:true (run them with flow_run {name}).', inputSchema: {}, annotations: { readOnlyHint: true } }, async () => run(async () => ok({ dir: flowsDir(), flows: listSavedFlows() })));
+
+  server.registerTool('tab_locator', { title: 'Locator candidates', description: 'Durable locators for one element, most durable first (testid, stable id, href, name, role+name, label, placeholder, text, generated), each run through the engine: matches, unique and sameElement say whether it still finds exactly this element. Use it to repair a failed flow step or to choose a stable target.',
+    inputSchema: { tab: z.string().optional(), target: targetSchema }, annotations: { readOnlyHint: true },
+  }, async ({ tab, target }) => run(async () => {
+    const t = await tabOf(tab);
+    const checked = checkActInput({ action: 'click', target });
+    return ok({ tab: t.id, ...(await locatorCandidates(t, checked.target!)) });
+  }));
+
+  const networkExpectTool = server.registerTool('network_expect', { title: 'Expect a request', description: 'Wait until a captured request to url (substring) after afterSequence matches method/status and JSON assertions on its request and response bodies (SSE responses parse to {events:[{event,data}]}). Paths: a.b, a[0], a[*].b, a[?k=v]; operators equals, notEquals, exists, type, minItems, maxItems, contains, matches, jsonHas. Pass the afterSequence of the tab_act that should send it. Returns the matching seq (network_inspect detail shows it in full); fails with expectation_failed and the closest candidates.',
+    inputSchema: { tab: z.string().optional(), ...networkMatchSchema.shape, afterSequence: z.number().int().min(0).optional().describe('network.afterSequence from the tab_act that sends the request'), timeout: z.number().min(0.5).max(120).default(10), ...stepMeta },
+    annotations: { readOnlyHint: true },
+  }, async ({ tab, url, method, status, request, response, afterSequence, timeout, intent, step }, ctx) => run(async () => {
+    if (!rt.hasFeature('network')) throw new ActionError('capability_unavailable', 'The connected extension does not advertise Network capture.', 'Run doctor to inspect its features and update the extension.');
+    const t = await tabOf(tab);
+    const match = { url, ...(method && { method }), ...(status !== undefined && { status }), ...(request && { request }), ...(response && { response }) };
+    const evidence = await journaled(state.journal, { tab: t.id, intent, step }, () => networkExpect(t, match, { afterSequence, timeoutMs: timeout * 1000, signal: ctxExtra(ctx).signal }), () => ({ record: { do: 'network', match, timeout } }), { do: 'network', match, timeout });
+    return ok({ tab: t.id, ...evidence });
+  }));
+  if (!rt.hasFeature('network')) networkExpectTool.disable();
+
+  server.registerTool('suite_run', { title: 'Run a site regression suite', description: 'Run <site>/suite.json: fixed requests to the endpoints the site\'s commands depend on, sent from a logged-in page of the site (page_request rules: session values, masked secrets) and judged by code. Uses tab (already on the site) or opens origin + the suite page. Returns per-check results, failures with path/op/expected/actual, skipped checks (missing capture) and affectedAdapters. Some checks may be writes the suite marks as probes; read the suite before running it against production.',
+    inputSchema: { site: z.string(), tab: z.string().optional().describe('a session tab already on the site'), origin: z.string().optional().describe('front end to test, e.g. https://testm.example.com; opens origin + suite page in a new tab'),
+      only: z.array(z.string()).optional().describe('check ids'), adapters: z.array(z.string()).optional().describe('only checks that these commands depend on'), timeout: z.number().min(1).max(120).default(30).describe('seconds per request') },
+    annotations: { openWorldHint: true },
+  }, async ({ site, tab, origin, only, adapters, timeout }, ctx) => run(async () => {
+    const found = rt.registry.suite(site);
+    if (!found) throw new ActionError('suite_not_found', `site "${site}" has no suite.json`, 'sites_search lists sites; a suite lives in <site>/suite.json of an adapter source.');
+    const suite = parseSuite(found.suite);
+    if (!tab && !origin) throw new ActionError('invalid_args', 'Pass tab (on the site) or origin.', 'origin is the front end under test; the suite page is opened there.');
+    const b = await api.agent.browsers.getDefault();
+    let t: Tab;
+    if (tab) t = b.tabs.get(tab);
+    else {
+      let start: string;
+      try { start = new URL(suite.page ?? '/', origin).href; } catch { throw new ActionError('invalid_url', `origin ${origin} is not a URL`); }
+      t = await b.tabs.new(start);
+    }
+    const report = await runSuite(t, suite, { only, adapters, timeoutMs: timeout * 1000, signal: ctxExtra(ctx).signal });
+    return { ...ok({ tab: t.id, source: found.source, ...report }), ...(report.failed > 0 && { isError: true }) };
+  }));
+
+  server.registerTool('plan_save', { title: 'Save a test plan', description: 'Validate a structured test plan (suites → cases → steps with perform and expect[{kind: page|server|network, text}], optional seed and write budget) and save it as JSON and Markdown under ~/.opencli-mcp/plans/. Case ids (e.g. "1.2") are what flows reference as case; step ids are what intent-carrying calls pass as step.',
+    inputSchema: { fileName: z.string().max(120), plan: planSchema },
+  }, async ({ fileName, plan }) => run(async () => {
+    const base = safeName(fileName);
+    const json = writeFile(plansDir(), `${base}.json`, `${JSON.stringify(plan, null, 2)}\n`);
+    const md = writeFile(plansDir(), `${base}.md`, planMarkdown(plan));
+    return ok({ files: { json, markdown: md }, suites: plan.suites.length, cases: plan.suites.reduce((n, s) => n + s.cases.length, 0) });
+  }));
 
   // ── sites ──
   server.registerTool('sites_search', { title: 'Find site capabilities', description: 'No query: list available sites with sample commands. With a task, site, or domain as query: find matching commands. Results include args[{name,type,required,help,default,choices}] for site_run. Do not invent parameters.', inputSchema: { query: z.string().optional().describe('task, site, or domain; omit to browse available sites'), limit: z.number().int().min(1).max(100).default(20) }, annotations: { readOnlyHint: true } }, async ({ query, limit }) => run(async () => query?.trim() ? ok({ results: await api.sites.search(query, limit) }) : ok({ sites: rt.registry.sites().slice(0, limit) })));
-  server.registerTool('site_run', { title: 'Run a site command', description: 'Run one site command. args must match the args list from sites_search. Invalid args return invalid_args with details.expected. Valid commands execute directly, including writes.', inputSchema: { site: z.string(), command: z.string(), args: z.record(z.string(), z.unknown()).default({}) }, annotations: { openWorldHint: true } }, async ({ site, command, args }, extra) => run(() => runSiteWithProgress(site, command, args, ctxExtra(extra))));
+  server.registerTool('site_run', { title: 'Run a site command', description: 'Run one site command. args must match the args list from sites_search. Invalid args return invalid_args with details.expected. Valid commands execute directly, including writes.', inputSchema: { site: z.string(), command: z.string(), args: z.record(z.string(), z.unknown()).default({}), ...stepMeta }, annotations: { openWorldHint: true } }, async ({ site, command, args, intent, step }, extra) => run(() => runSiteWithProgress(site, command, args, ctxExtra(extra), { intent, step })));
 
   // ── capabilities ──
 

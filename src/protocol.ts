@@ -193,7 +193,7 @@ export type BrowserEvent =
 export type HostToExt = { type: 'command'; command: Command } | { type: 'ready'; version: string; port: number };
 /** Bump when the host and extension command contract changes. Package versions are independent. */
 export const PROTOCOL_REVISION = 1;
-export type BrowserFeature = 'cdp' | 'network' | 'frames' | 'dialogs' | 'console' | 'downloads' | 'viewport' | 'visibility' | 'webmcp';
+export type BrowserFeature = 'cdp' | 'network' | 'frames' | 'dialogs' | 'console' | 'downloads' | 'viewport' | 'visibility' | 'webmcp' | 'expect-state';
 export type ExtToHost =
   | { type: 'hello'; extensionVersion: string; protocolRevision: number; features: BrowserFeature[] }
   | { type: 'result'; result: Result }

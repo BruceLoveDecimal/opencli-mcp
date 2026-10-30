@@ -7,6 +7,8 @@ site's own API from the logged-in page (`_shared.js`), so they need a browser pr
   own dialog and returns the session's API headers. The site runs a reCAPTCHA before it logs in; the command never
   solves it: with `captcha_wait_sec` it waits for a person to complete the check in the same page, without it fails
   with `captcha_required`. Already signed in to the same account, it returns at once without touching the form.
+- **Seed** (the `seed` role): `seed {origin, path}` confirms the browser is signed in on `origin` and returns the start
+  `url` for a UI flow (`flow_run` runs it before the steps). It never logs in or changes data.
 - **Read**: `whoami`, `credits`, `works`, `work`, `projects`, `conversation`, `generation-wait`, `avatars`, `voices`, `image-models`,
   `agent-models`, `agent-tools`, `sitemap`.
 - **Write** (spend credits or the free daily uses): `agent-chat`, `agent-image`, `agent-video`, `ai-image`, `ai-video`,

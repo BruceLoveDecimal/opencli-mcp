@@ -4,6 +4,7 @@
  */
 import type { Runtime } from '../runtime/runtime.js';
 import { ActionError } from './errors.js';
+import { journaled, siteRecord, type StepMeta } from '../flows/journal.js';
 import { argSpec } from '../sites/schema.js';
 import { discoverEndpoints, type DiscoverResult } from '../recon/discover.js';
 import { listDefinedTools, type ToolDefinition } from '../sites/define.js';
@@ -16,7 +17,7 @@ import type { SessionContext } from './context.js';
 
 export interface AgentApi {
   agent: { browsers: { getDefault(): Promise<Browser> }; browser: Browser; documentation: { get(name: string): string | null } };
-  sites: Record<string, unknown> & { search(q: string, limit?: number): Promise<unknown>; list(): unknown; enable(site: string, opts?: { write?: boolean }): Promise<{ site: string; tools: string[] }>; disable(site: string): boolean; run(site: string, name: string, args?: Record<string, unknown>): Promise<unknown> };
+  sites: Record<string, unknown> & { search(q: string, limit?: number): Promise<unknown>; list(): unknown; enable(site: string, opts?: { write?: boolean }): Promise<{ site: string; tools: string[] }>; disable(site: string): boolean; run(site: string, name: string, args?: Record<string, unknown>, meta?: StepMeta): Promise<unknown> };
   recon: { discover(tab: Tab, opts?: Parameters<typeof discoverEndpoints>[1]): Promise<DiscoverResult> };
   tools: { define(def: ToolDefinition | (Omit<ToolDefinition, 'func'> & { func?: string | ((ctx: Record<string, unknown>) => unknown) })): ReturnType<Runtime['defineTool']>; try(draftId: string, args: Record<string, unknown>, expect: DraftExpectation): ReturnType<Runtime['tryToolDraft']>; activate(draftId: string): ReturnType<Runtime['activateToolDraft']>; discard(draftId: string): ReturnType<Runtime['discardToolDraft']>; list(): ReturnType<typeof listDefinedTools>; remove(site: string, name: string): ReturnType<Runtime['removeTool']> };
   session: { id: string };
@@ -44,10 +45,13 @@ export function createAgentApi(rt: Runtime, sessionId: string): AgentApi {
       return { site, tools, commands: cmds.map((c) => ({ tool: `${site}_${c.name}`.replace(/[^A-Za-z0-9_-]/g, '_'), description: c.description, access: c.access, args: argSpec(c.args), result: c.result })), note: 'Adapter commands use your logged-in Chrome session in a background tab.' };
     },
     disable: (site: string) => { const ok = state.enabledSites.delete(site); if (ok) rt.emit('tools-changed', { site }); return ok; },
-    run: async (site: string, name: string, args: Record<string, unknown> = {}) => {
-      const r = await rt.runSite(site, name, args);
-      if (!r.ok) throw new ActionError(r.error.code, r.error.message, r.error.hint, { site, command: name , ...(r.error.details && { details: r.error.details }) });
-      return r.nextCursor ? { rows: r.rows, nextCursor: r.nextCursor } : (r.rows ?? r.value);
+    run: async (site: string, name: string, args: Record<string, unknown> = {}, meta: StepMeta = {}) => {
+      const access = (await rt.registry.resolve(site, name).catch(() => undefined))?.access;
+      return journaled(state.journal, meta, async () => {
+        const r = await rt.runSite(site, name, args);
+        if (!r.ok) throw new ActionError(r.error.code, r.error.message, r.error.hint, { site, command: name , ...(r.error.details && { details: r.error.details }) });
+        return r.nextCursor ? { rows: r.rows, nextCursor: r.nextCursor } : (r.rows ?? r.value);
+      }, () => siteRecord(site, name, args, access), siteRecord(site, name, args, access).record);
     },
   };
   const sites = new Proxy(siteBase as AgentApi['sites'], {

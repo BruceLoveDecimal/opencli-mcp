@@ -119,6 +119,17 @@ export class SiteRegistry {
 
   private siteAliases(site: string): string[] { return this.siteMetadata(site).aliases; }
 
+  /** `<site>/suite.json` from the latest source that has one (a suite is replaced whole, not merged). */
+  suite(site: string): { suite: Record<string, unknown>; source: SourceKind; file: string } | null {
+    for (const source of [...this.existingDirs()].reverse()) {
+      const file = path.join(source.dir, site, 'suite.json');
+      let text: string;
+      try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
+      return { suite: JSON.parse(text) as Record<string, unknown>, source: source.kind, file };
+    }
+    return null;
+  }
+
   /** site.json across sources: aliases merge, any other field the latest source that sets it wins. */
   siteMetadata(site: string): SiteMetadata {
     const aliases = new Set<string>();

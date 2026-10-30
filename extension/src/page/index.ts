@@ -640,9 +640,30 @@ export function check(args: Expectation): CheckResult {
   if (locator !== undefined) {
     const els = query(locator);
     const wantVisible = args.visible !== false;
-    if (!els.length) { if (wantVisible) failed.push(`${locator} matches nothing`); }
-    else if (wantVisible && !els.some((e) => is(e, 'visible'))) failed.push(`${locator} matches but none is visible`);
+    const counting = args.count !== undefined;
+    if (counting && els.length !== args.count) failed.push(`${locator} matches ${els.length} elements, expected ${args.count}`);
+    if (!els.length) { if (wantVisible && !counting) failed.push(`${locator} matches nothing`); }
+    else if (wantVisible && !counting && !els.some((e) => is(e, 'visible'))) failed.push(`${locator} matches but none is visible`);
     else if (!wantVisible && els.some((e) => is(e, 'visible'))) failed.push(`${locator} is still visible`);
+    // element state is read on the first visible match (the one an action would take)
+    const el = els.find((e) => is(e, 'visible')) ?? els[0];
+    if (el && (args.value !== undefined || args.enabled !== undefined || args.checked !== undefined || args.hasText !== undefined)) {
+      const t = retarget(el) as HTMLInputElement;
+      if (args.value !== undefined) {
+        const actual = (t as HTMLElement).isContentEditable ? (t.textContent ?? '') : (t.value ?? null);
+        if (actual !== args.value) failed.push(`${locator} value is ${isCredentialField(t) ? '<redacted>' : JSON.stringify(actual)}, expected ${isCredentialField(t) ? '<redacted>' : JSON.stringify(args.value)}`);
+      }
+      if (args.enabled !== undefined && is(el, 'enabled') !== args.enabled) failed.push(`${locator} is ${args.enabled ? 'disabled' : 'enabled'}`);
+      if (args.checked !== undefined) {
+        const c = stateOf(el, 'checked');
+        if (c.received.startsWith('error:')) failed.push(`${locator} is not checkable`);
+        else if (c.matches !== args.checked) failed.push(`${locator} is ${args.checked ? 'not checked' : 'checked'}`);
+      }
+      if (args.hasText !== undefined) {
+        const inner = ((el as HTMLElement).innerText ?? el.textContent ?? '').replace(/\s+/g, ' ');
+        if (!inner.includes(args.hasText)) failed.push(`${locator} text does not include "${args.hasText}"`);
+      }
+    } else if (!el && (args.value !== undefined || args.enabled !== undefined || args.checked !== undefined || args.hasText !== undefined)) failed.push(`${locator} matches nothing to read state from`);
   }
   return { ok: failed.length === 0, failed, url: location.href, title: document.title };
 }

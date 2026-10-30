@@ -21,6 +21,8 @@ export const targetSchema = z.object({
 const common = {
   tab: z.string().optional().describe('required when the session has more than one tab'),
   observe: z.boolean().default(false).describe('also return the page state after the action'),
+  intent: z.string().max(300).optional().describe('the test step this action performs (e.g. the plan step text); recorded in the journal'),
+  step: z.string().max(40).optional().describe('case step id the action belongs to, e.g. "2"'),
 };
 
 function variant(actions: ActAction[]) {

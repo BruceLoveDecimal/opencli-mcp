@@ -143,7 +143,11 @@ export function checkActInput(input: ActToolInput): { target?: Target; to?: Targ
 
 const EXPECT_KEYS = ['text', 'notText', 'url', 'title', 'selector', 'ref'] as const;
 
-export function checkExpect(what: { text?: string; notText?: string; url?: string; title?: string; selector?: string; ref?: string; visible?: boolean }): void {
+export function checkExpect(what: { text?: string; notText?: string; url?: string; title?: string; selector?: string; ref?: string; visible?: boolean; value?: string; count?: number; enabled?: boolean; checked?: boolean; hasText?: string }): void {
+  const state = (['value', 'count', 'enabled', 'checked', 'hasText'] as const).filter((k) => what[k] !== undefined);
+  if (state.length && !what.selector && !what.ref) {
+    throw new ActionError('invalid_args', `${state.join(', ')} require selector or ref.`, 'Element state is read from the element the selector or ref names.', { details: { expected: { [state[0]]: 'with selector or ref' } } });
+  }
   const has = EXPECT_KEYS.some((k) => what[k] !== undefined && what[k] !== '');
   if (!has) {
     throw new ActionError('invalid_args', 'tab_expect needs at least one of text, notText, url, title, selector, ref.', 'An empty expect succeeds without looking at the page.', { details: { expected: { oneOf: [...EXPECT_KEYS] } } });

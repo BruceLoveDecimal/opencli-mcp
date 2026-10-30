@@ -28,6 +28,7 @@ export const DOCS_MANIFEST: DocEntry[] = [
   { name: 'errors', mode: 'lookup', description: 'error code families and what to do for each' },
   { name: 'recon', mode: 'lookup', description: 'read before discovering a site’s API endpoints' },
   { name: 'define-tools', mode: 'lookup', description: 'read before defining a site adapter' },
+  { name: 'flows', mode: 'lookup', description: 'test work: intents and the journal, exporting and replaying flows, repairing a paused run, locators, network and suite checks, plans' },
   ...BROWSER_CAPABILITIES.filter((entry) => entry.doc).map((entry): DocEntry => ({ name: entry.doc!, mode: 'model', when: { capabilities: [entry.id] } })),
   { name: 'troubleshooting', mode: 'lookup', description: 'read when the browser bridge fails' },
 ];
