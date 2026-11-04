@@ -97,6 +97,8 @@ async function resizePage(endpoint: string, url: string, width: number, height: 
 async function startSite(): Promise<{ url: string; close: () => Promise<void> }> {
   let flaky = 0;
   const server = http.createServer((req, res) => {
+    if (req.url === '/file') { res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename=sample.txt' }).end('download evidence'); return; }
+    if (req.url === '/download') { res.writeHead(200, { 'content-type': 'text/html' }).end('<a href="/file">Download</a>'); return; }
     if (req.url === '/pixel.gif') {
       res.writeHead(200, { 'content-type': 'image/gif' }).end(Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==', 'base64'));
       return;
@@ -161,6 +163,25 @@ function parse(result: Awaited<ReturnType<Client['callTool']>>): Record<string, 
 
 describe.skipIf(!CHROME)('cdp backend', () => {
   const cleanup: Array<() => Promise<void> | void> = [];
+
+  it.each(['browser', 'page'])('confirms saved downloads through a %s endpoint', async (endpointKind) => {
+    const site = await startSite(); cleanup.push(site.close);
+    const chrome = await startChrome();
+    cleanup.push(async () => { chrome.proc.kill(); await new Promise((r) => chrome.proc.once('exit', r)); fs.rmSync(chrome.profile, { recursive: true, force: true, maxRetries: 5 }); });
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'download-test-'));
+    cleanup.push(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const pages = await (await fetch(`${chrome.endpoint}/json/list`)).json() as Array<{ type: string; webSocketDebuggerUrl: string }>;
+    const endpoint = endpointKind === 'page' ? pages.find((page) => page.type === 'page')!.webSocketDebuggerUrl : chrome.endpoint;
+    const transport = new StdioClientTransport({ command: process.execPath, args: ['--import', 'tsx', path.resolve('src/main.ts'), 'cdp', '--endpoint', endpoint], env: { ...process.env as Record<string, string>, OPENCLI_MCP_DOWNLOAD_DIR: directory }, stderr: 'inherit' });
+    const client = new Client({ name: 'download-test', version: '1' }, { capabilities: {} });
+    await client.connect(transport); cleanup.push(() => client.close());
+    await client.callTool({ name: 'tab_open', arguments: { url: `${site.url}/download` } });
+    const action = parse(await client.callTool({ name: 'tab_act', arguments: { action: 'click', target: { text: 'Download' } } }));
+    const result = parse(await client.callTool({ name: 'tab_download_wait', arguments: { afterSequence: (action.download as { afterSequence: number }).afterSequence, timeoutMs: 5000 } }));
+    expect(result, JSON.stringify(result)).toMatchObject({ downloaded: true, state: 'complete' });
+    expect(fs.readFileSync(String(result.filename), 'utf8')).toBe('download evidence');
+    expect(parse(await client.callTool({ name: 'tab_download_wait', arguments: { afterSequence: 999999, timeoutMs: 10 } }))).toMatchObject({ downloaded: false, state: 'cursor_expired' });
+  }, 60_000);
 
   it.each(['browser', 'page'])('uploads hidden file controls through a %s endpoint', async (endpointKind) => {
     const site = await startSite(); cleanup.push(site.close);

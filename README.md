@@ -161,3 +161,7 @@ Found a bug or have a feature request? [Open an issue](https://github.com/jackwe
 ## License and credits
 
 [Apache-2.0](LICENSE). Some browser helpers and adapters were adapted from [OpenCLI](https://github.com/jackwener/OpenCLI); no OpenCLI dependency or compatibility layer is required. Uses [Playwright](https://github.com/microsoft/playwright)'s injected locator engine. Endpoint analysis is inspired by [jsluice](https://github.com/BishopFox/jsluice).
+
+### Controlled CDP downloads
+
+Set `OPENCLI_MCP_DOWNLOAD_DIR` to an absolute host-owned directory before starting `cdp` to enable `tab_download_wait`. The backend uses Browser download events and `allowAndName`, so saved files use GUID names. Keep `download.afterSequence` from the triggering `tab_act`, query the same page and cursor until complete, and treat interrupted, ambiguous, expired and pending states as unconfirmed. The directory is retained after shutdown. Single-page embedded hosts must implement the same Browser download behavior/events contract. Without this setting the CDP backend does not advertise downloads or write into the user's Downloads folder.

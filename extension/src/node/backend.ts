@@ -16,7 +16,7 @@ import { evaluateInEngine, evaluateMain, registerFrameTracking, forgetTab as for
 import { CdpConnection, resolveEndpoint } from './connection';
 import { ChromeShim, type ShimTab } from './chrome-shim';
 
-export const FEATURES: BrowserFeature[] = ['cdp', 'network', 'frames', 'dialogs', 'console', 'viewport'];
+export const FEATURES: BrowserFeature[] = ['cdp', 'network', 'frames', 'dialogs', 'console', 'viewport', ...(process.env.OPENCLI_MCP_DOWNLOAD_DIR ? ['downloads' as const] : [])];
 
 const CDP_ALLOWLIST = new Set([
   'Accessibility.enable', 'Accessibility.getFullAXTree', 'Accessibility.getPartialAXTree',
@@ -406,7 +406,7 @@ export async function startCdpBackend(opts: CdpBackendOptions): Promise<CdpBacke
         case 'user-tabs': return { id: cmd.id, ok: true, data: [] };
         case 'claim': return unsupported(cmd.id, 'Claiming a user tab');
         case 'close-user-tabs': return unsupported(cmd.id, 'Closing user tabs');
-        case 'wait-download': return unsupported(cmd.id, 'Download tracking');
+        case 'wait-download': { const tabId = await resolveTab(s, cmd.page); return pageScoped(cmd.id, tabId, await executor.waitForDownload(tabId, cmd.afterSequence!, cmd.timeoutMs)); }
         default: return { id: cmd.id, ok: false, error: `Unknown action: ${String(cmd.action)}`, errorCode: 'unknown_action' };
       }
     } catch (err) {

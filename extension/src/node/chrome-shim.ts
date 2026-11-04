@@ -11,6 +11,8 @@
  * Only what the engine relies on is modelled: tab url/title/status from Page events, webNavigation for the main
  * frame (frameId 0), debugger events routed to `{tabId}` / `{tabId, sessionId}` / `{targetId}` debuggees.
  */
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { CdpConnection } from './connection';
 
 type Listener<A extends unknown[]> = (...args: A) => unknown;
@@ -79,7 +81,18 @@ export class ChromeShim {
   /** The engine page module (extension/dist/page.js), served to world.ts through `chrome.runtime.getURL`. */
   setPageModule(source: string): void { this.pageData = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`; }
 
+  private readonly downloadCreated = new ChromeEvent<[chrome.downloads.DownloadItem]>();
+  private readonly downloads = new Map<string, chrome.downloads.DownloadItem>();
+  private downloadDirectory = '';
+
   async init(): Promise<void> {
+    // A host-owned directory is required; never fall back to the user's Downloads folder.
+    const directory = process.env.OPENCLI_MCP_DOWNLOAD_DIR;
+    if (directory) {
+      await mkdir(directory, { recursive: true });
+      await this.conn.send('Browser.setDownloadBehavior', { behavior: 'allowAndName', downloadPath: directory, eventsEnabled: true });
+      this.downloadDirectory = directory;
+    }
     if (this.mode === 'page') {
       const tab: ShimTab = { id: this.nextTabId++, targetId: 'page', url: '', title: '', status: 'complete' };
       this.tabs.set(tab.id, tab);
@@ -179,6 +192,29 @@ export class ChromeShim {
   }
 
   private onCdpEvent(method: string, params: Record<string, unknown>, sessionId: string | undefined): void {
+    if (method === 'Browser.downloadWillBegin' && this.downloadDirectory) {
+      const guid = String(params.guid);
+      const item = { id: this.downloads.size + 1, url: String(params.url), finalUrl: String(params.url),
+        filename: join(this.downloadDirectory, guid), state: 'in_progress', totalBytes: 0,
+        bytesReceived: 0, mime: '', paused: false, incognito: false,
+        exists: false, canResume: false, startTime: new Date().toISOString() } as chrome.downloads.DownloadItem;
+      this.downloads.set(guid, item);
+      // Preserve tab provenance for the existing action cursor and ambiguity checks.
+      const tab = [...this.tabs.values()].find((value) => value.mainFrameId === params.frameId);
+      if (tab) this.debuggerEvent.emit({ tabId: tab.id }, 'Page.downloadWillBegin', params);
+      this.downloadCreated.emit(item);
+      return;
+    }
+    if (method === 'Browser.downloadProgress') {
+      const item = this.downloads.get(String(params.guid));
+      if (item) {
+        item.totalBytes = Number(params.totalBytes || 0);
+        item.bytesReceived = Number(params.receivedBytes || 0);
+        item.state = params.state === 'completed' ? 'complete' : params.state === 'canceled' ? 'interrupted' : 'in_progress';
+        item.exists = item.state === 'complete';
+      }
+      return;
+    }
     // browser-level target bookkeeping (browser endpoint: events without a session)
     if (this.mode === 'browser' && sessionId === undefined) {
       const info = params.targetInfo as { targetId: string; type: string; url: string; title: string; openerId?: string } | undefined;
@@ -314,10 +350,10 @@ export class ChromeShim {
         },
         getManifest: () => ({ version: 'cdp' }),
       },
-      // downloads go to the browser's own directory; completion is not tracked by this backend
+      // Reuse the engine's cursor checks with Browser-domain progress and GUID file paths.
       downloads: {
-        onCreated: new ChromeEvent<[chrome.downloads.DownloadItem]>(),
-        search: async () => [],
+        onCreated: shim.downloadCreated,
+        search: async (query: { id?: number }) => [...shim.downloads.values()].filter((item) => query.id === undefined || item.id === query.id),
       },
     };
     return api as unknown as typeof chrome;

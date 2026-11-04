@@ -490,6 +490,7 @@ function downloadResult(item: chrome.downloads.DownloadItem, startedAt: number, 
     finalUrl: item.finalUrl,
     mime: item.mime,
     totalBytes: item.totalBytes,
+    receivedBytes: item.bytesReceived,
     state: item.state,
     danger: item.danger,
     error: item.error,
@@ -520,6 +521,7 @@ export async function waitForDownload(tabId: number, afterSequence: number, time
     if (matches.length > 1) return { downloaded: false, started: true, sequence: event.seq, suggestedFilename: event.suggestedFilename, state: 'ambiguous', candidates: matches.length, error: 'Multiple Chrome downloads match the page event.', elapsedMs: Date.now() - startedAt };
     const item = matches[0] ? (await chrome.downloads.search({ id: matches[0].id }))[0] : undefined;
     if (item?.state === 'complete' || item?.state === 'interrupted') return downloadResult(item, startedAt, event);
+    if (Date.now() >= deadline && item) return downloadResult(item, startedAt, event);
     if (Date.now() >= deadline) return { downloaded: false, started: true, sequence: event.seq, suggestedFilename: event.suggestedFilename, url: event.url, state: item?.state ?? 'unconfirmed', elapsedMs: Date.now() - startedAt };
     await new Promise((resolve) => setTimeout(resolve, 200));
   }

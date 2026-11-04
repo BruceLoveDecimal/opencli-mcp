@@ -160,6 +160,7 @@ export interface DownloadWaitResult {
   finalUrl?: string;
   mime?: string;
   totalBytes?: number;
+  receivedBytes?: number;
   state?: string;
   danger?: string;
   error?: string;
