@@ -250,6 +250,30 @@ describe.skipIf(!CHROME)('cdp backend', () => {
       previousRef = field.ref;
     }
   }, 60_000);
+
+  it('exposes viewport, IME and bounded network faults as typed MCP tools', async () => {
+    const site = await startSite(); cleanup.push(site.close);
+    const chrome = await startChrome();
+    cleanup.push(async () => { chrome.proc.kill(); await new Promise((r) => chrome.proc.once('exit', r)); fs.rmSync(chrome.profile, { recursive: true, force: true, maxRetries: 5 }); });
+    const transport = new StdioClientTransport({ command: process.execPath, args: ['--import', 'tsx', path.resolve('src/main.ts'), 'cdp', '--endpoint', chrome.endpoint, '--allow-origin', site.url], stderr: 'ignore' });
+    const client = new Client({ name: 'network-tools-test', version: '1' }, { capabilities: {} });
+    await client.connect(transport); cleanup.push(() => client.close());
+    expect(parse(await client.callTool({ name: 'tab_open', arguments: { url: site.url } })).ok).toBe(true);
+    expect(parse(await client.callTool({ name: 'browser_viewport', arguments: { width: 360, height: 740, mobile: true } }))).toMatchObject({ ok: true, requested: { width: 360, height: 740, mobile: true } });
+    expect(parse(await client.callTool({ name: 'browser_viewport', arguments: { action: 'reset' } })).ok).toBe(true);
+    expect(parse(await client.callTool({ name: 'browser_ime', arguments: { target: { label: 'Name' }, text: '拼', action: 'compose' } }))).toMatchObject({ ok: true, delivered: true, action: 'compose', state: { value: '拼' } });
+    expect(parse(await client.callTool({ name: 'browser_ime', arguments: { target: { label: 'Name' }, text: '音', action: 'commit' } }))).toMatchObject({ ok: true, delivered: true, action: 'commit' });
+    expect(parse(await client.callTool({ name: 'network_mock', arguments: { url: '/api/signup', status: 503 } }))).toMatchObject({ ok: true, active: true });
+    await client.callTool({ name: 'tab_act', arguments: { action: 'click', target: { role: 'button', name: 'Submit' } } });
+    const failed = parse(await client.callTool({ name: 'network_inspect', arguments: { action: 'list', filter: '/api/signup' } }));
+    expect(JSON.stringify(failed)).toContain('503');
+    expect(parse(await client.callTool({ name: 'network_mock', arguments: { action: 'clear' } }))).toMatchObject({ ok: true, active: false });
+    await client.callTool({ name: 'tab_act', arguments: { action: 'fill', target: { label: 'Name' }, value: 'Ada' } });
+    await client.callTool({ name: 'tab_act', arguments: { action: 'click', target: { role: 'button', name: 'Submit' } } });
+    expect(parse(await client.callTool({ name: 'tab_expect', arguments: { text: 'Welcome, Ada', timeout: 3 } })).ok).toBe(true);
+    expect(parse(await client.callTool({ name: 'tab_act', arguments: { action: 'click', target: { role: 'link', name: 'Leave' } } })).ok).toBe(true);
+    expect(parse(await client.callTool({ name: 'tab_expect', arguments: { url: site.url } })).ok).toBe(true);
+  }, 60_000);
   afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 
   it('drives a headless Chrome through the MCP tools, captures its requests and keeps it on allowed origins', async () => {

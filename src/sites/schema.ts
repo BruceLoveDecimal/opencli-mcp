@@ -26,7 +26,7 @@ function valueToZod(value: ArgValue, depth = 0): ZodTypeAny {
         if (field.help) fieldType = fieldType.describe(field.help);
         shape[key] = field.required ? fieldType : fieldType.optional();
       }
-      t = z.object(shape).strict(); break;
+      t = value.open ? z.looseObject(shape) : z.object(shape).strict(); break;
     }
     default: throw new Error(`unknown adapter argument type: ${String(value.type)}`);
   }

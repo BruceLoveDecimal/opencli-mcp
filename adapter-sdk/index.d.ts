@@ -8,6 +8,8 @@ export interface ArgValue {
   choices?: Array<string | number | boolean>;
   items?: ArgValue;
   properties?: Record<string, ArgValue & { required?: boolean; help?: string }>;
+  /** Permit undeclared JSON fields for an opaque server payload; default is a strict object. */
+  open?: boolean;
   min?: number;
   max?: number;
   minLength?: number;
@@ -48,8 +50,13 @@ export interface Tab {
   cookie(name: string, opts?: { domain?: string }): Promise<string | undefined>;
   cookies(domain: string): Promise<unknown[]>;
   screenshot(opts?: { fullPage?: boolean; annotate?: boolean; format?: 'png' | 'jpeg'; quality?: number }): Promise<unknown>;
+  viewport(opts: { width: number; height: number; mobile?: boolean }): Promise<Record<string, unknown>>;
+  resetViewport(): Promise<Record<string, unknown>>;
+  ime(opts: { target: Record<string, unknown>; text: string; action: 'compose' | 'commit' | 'cancel' }): Promise<Record<string, unknown>>;
   readonly network: {
     start(pattern?: string): Promise<boolean>;
+    mock(spec: { url: string; delayMs?: number; offline?: boolean; dropResponse?: boolean; status?: number; emptyObject?: boolean; replayEvents?: boolean }): Promise<unknown>;
+    clearMock(): Promise<unknown>;
     list(opts?: { filter?: string; limit?: number; afterSequence?: number }): Promise<{ cursor: number; entries: unknown[]; hasMore: boolean }>;
     detail(opts: { seq?: number; requestId?: string; part?: 'request' | 'response'; start?: number; maxChars?: number }): Promise<unknown>;
     read(opts?: { pattern?: string; limit?: number; includeStatic?: boolean; afterSequence?: number }): Promise<NetworkReadResult>;

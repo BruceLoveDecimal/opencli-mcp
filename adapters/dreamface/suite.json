@@ -23,7 +23,7 @@
 				{ "path": "data", "minItems": 1 },
 				{ "path": "data[*].name", "type": "string" }
 			],
-			"adapters": ["agent-models"]
+			"adapters": ["agent-models", "model-catalog", "chat-turn"]
 		},
 		{
 			"id": "agent-tools",
@@ -235,7 +235,7 @@
 				{ "path": "status_code", "equals": "-1000" },
 				{ "path": "status_msg", "equals": "Parameter Illegal" }
 			],
-			"adapters": ["agent-chat", "agent-image", "agent-video"]
+			"adapters": ["agent-chat", "agent-image", "agent-video", "canvas-project"]
 		},
 		{
 			"id": "agent-chat",
@@ -249,7 +249,85 @@
 				{ "path": "events[0].data.error", "equals": "Parameter Illegal" },
 				{ "path": "events[?event=done].data.success", "equals": false }
 			],
-			"adapters": ["agent-chat", "agent-image", "agent-video"]
+			"adapters": ["agent-chat", "agent-image", "agent-video", "chat-turn", "interaction-action"]
+		},
+		{
+			"id": "skill-list",
+			"name": "手动 Skill 目录（语言参数）",
+			"method": "POST",
+			"path": "/df-tide-agent/skill/v1/list",
+			"body": { "language": "zh" },
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data", "type": "array" }
+			],
+			"adapters": ["skill-list"]
+		},
+		{
+			"id": "ordinary-conversations",
+			"name": "普通 CHAT 会话分页（与 Canvas 隔离）",
+			"method": "GET",
+			"path": "/df-tide-agent/conversation/v1/list",
+			"query": { "user_id": "${userId}", "account_id": "${accountId}", "scene_type": "CHAT", "platform_type": "WEB", "limit": 1 },
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data", "type": "object" }
+			],
+			"adapters": ["chat-history"]
+		},
+		{
+			"id": "chat-cancel-probe",
+			"name": "停止原 Turn：空参数校验探测",
+			"method": "POST",
+			"path": "/df-tide-agent/agent/v2/chat/cancel",
+			"body": {},
+			"expect": [{ "path": "status_code", "type": "string" }],
+			"adapters": ["chat-stop"]
+		},
+		{
+			"id": "interaction-detail-probe",
+			"name": "交互卡补查：不存在的交互不得返回他人卡片",
+			"method": "GET",
+			"path": "/df-tide-agent/agent/v1/gate/detail",
+			"query": { "interaction_id": "opencli-missing-interaction", "user_id": "${userId}", "account_id": "${accountId}" },
+			"expect": [{ "path": "status_code", "type": "string" }],
+			"adapters": ["interaction-state"]
+		},
+		{
+			"id": "canvas-snapshot",
+			"name": "画布持久化快照",
+			"method": "GET",
+			"path": "/df-tide-agent/canvas/v1/project/snapshot",
+			"query": { "project_id": "${projectId}", "user_id": "${userId}", "account_id": "${accountId}" },
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data.document.project_id", "equals": "${projectId}" },
+				{ "path": "data.document.revision", "type": "number" }
+			],
+			"adapters": ["canvas-project", "canvas-nodes"]
+		},
+		{
+			"id": "canvas-resource-urls",
+			"name": "画布资源按项目解析（空资源列表，不写资源）",
+			"method": "POST",
+			"path": "/df-tide-agent/canvas/v1/resource/batch-url",
+			"query": { "user_id": "${userId}", "account_id": "${accountId}" },
+			"body": { "project_id": "${projectId}", "asset_ids": [] },
+			"expect": [
+				{ "path": "status_code", "equals": "THS12140000000" },
+				{ "path": "data.assets", "type": "array" }
+			],
+			"adapters": ["canvas-project", "canvas-nodes"]
+		},
+		{
+			"id": "canvas-save-probe",
+			"name": "画布保存：空参数校验探测（不写快照）",
+			"method": "POST",
+			"path": "/df-tide-agent/canvas/v1/project/save",
+			"query": { "user_id": "${userId}", "account_id": "${accountId}" },
+			"body": {},
+			"expect": [{ "path": "status_code", "type": "string" }],
+			"adapters": ["canvas-save"]
 		},
 		{
 			"id": "task-submit",

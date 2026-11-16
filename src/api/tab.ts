@@ -148,6 +148,34 @@ export class Tab {
     } finally { if (opts.annotate) await page.pageCall('unannotate').catch(() => {}); }
   }
 
+  async viewport(opts: { width: number; height: number; mobile?: boolean }): Promise<Record<string, unknown>> {
+    return this.use(async (page) => {
+      await page.cdp('Emulation.setDeviceMetricsOverride', { width: opts.width, height: opts.height, deviceScaleFactor: 1, mobile: opts.mobile ?? false });
+      return { requested: { width: opts.width, height: opts.height, mobile: opts.mobile ?? false }, ...(await page.evaluate<Record<string, unknown>>('({ width: innerWidth, height: innerHeight, mobile: matchMedia("(pointer: coarse)").matches })')) };
+    });
+  }
+  async resetViewport(): Promise<Record<string, unknown>> {
+    return this.use(async (page) => {
+      await page.cdp('Emulation.clearDeviceMetricsOverride', {});
+      return { ...(await page.evaluate<Record<string, unknown>>('({ width: innerWidth, height: innerHeight })')) };
+    });
+  }
+  /** Drive Chrome's composition path instead of synthesizing an Enter key during IME candidate selection. */
+  async ime(opts: { target: Target; text: string; action: 'compose' | 'commit' | 'cancel' }): Promise<Record<string, unknown>> {
+    await this.act({ action: 'focus', target: opts.target });
+    return this.use(async (page) => {
+      if (opts.action === 'commit') await page.cdp('Input.insertText', { text: opts.text });
+      else await page.cdp('Input.imeSetComposition', {
+        text: opts.action === 'cancel' ? '' : opts.text,
+        selectionStart: opts.action === 'cancel' ? 0 : opts.text.length,
+        selectionEnd: opts.action === 'cancel' ? 0 : opts.text.length,
+        ...(opts.action === 'compose' && { replacementStart: 0, replacementEnd: 0 }),
+      });
+      const state = await page.evaluate<Record<string, unknown>>('(() => { const e = document.activeElement; return { tag: e?.tagName ?? null, value: "value" in e ? e.value : e?.textContent ?? "" }; })()');
+      return { action: opts.action, delivered: true, composition: 'cdp_command_accepted', state };
+    });
+  }
+
   async find(target: (Target & { limit?: number }) | { query: string; limit?: number }): Promise<FindResult | ElementAtResult | QueryFindResult> {
     return this.use(async (page) => {
       if ('query' in target) return await page.pageCall('findByQuery', { query: target.query, limit: target.limit ?? 20 }) as QueryFindResult;
@@ -269,6 +297,8 @@ export class Tab {
 
   readonly network = {
     start: async (pattern = ''): Promise<boolean> => this.use((p) => p.startNetworkCapture(pattern)),
+    mock: async (spec: import('../protocol.js').NetworkMockSpec): Promise<unknown> => this.use((p) => p.networkMock(spec)),
+    clearMock: async (): Promise<unknown> => this.use((p) => p.networkMock()),
     list: async (opts: { filter?: string; limit?: number; afterSequence?: number } = {}): Promise<{ cursor: number; entries: Record<string, unknown>[]; hasMore: boolean }> => {
       const raw = await this.network.read({ pattern: opts.filter, limit: opts.limit ?? 30, afterSequence: opts.afterSequence });
       return { ...raw, entries: (raw.entries as Array<Record<string, unknown> & { seq: number }>).map(networkSummary) };

@@ -6,6 +6,7 @@
  */
 import type { Command, Result } from '../../src/protocol.js';
 import * as executor from './cdp';
+import { clearNetworkMock, setNetworkMock } from './network-mock';
 import * as identity from './identity';
 import { executeWithJournal } from './journal';
 import { NativeHost } from './native';
@@ -17,7 +18,7 @@ const CDP_ALLOWLIST = new Set([
   'Accessibility.enable', 'Accessibility.getFullAXTree', 'Accessibility.getPartialAXTree',
   'DOM.enable', 'DOM.getDocument', 'DOM.getBoxModel', 'DOM.getContentQuads', 'DOM.focus', 'DOM.querySelector', 'DOM.querySelectorAll', 'DOM.scrollIntoViewIfNeeded', 'DOM.describeNode', 'DOM.getNodeForLocation',
   'DOMSnapshot.captureSnapshot',
-  'Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText', 'Input.dispatchTouchEvent',
+  'Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText', 'Input.imeSetComposition', 'Input.dispatchTouchEvent',
   'Page.getLayoutMetrics', 'Page.captureScreenshot', 'Page.getFrameTree', 'Page.handleJavaScriptDialog', 'Page.getNavigationHistory',
   'Runtime.enable', 'Runtime.getHeapUsage',
   'Emulation.setDeviceMetricsOverride', 'Emulation.clearDeviceMetricsOverride',
@@ -87,6 +88,12 @@ async function handleCommand(cmd: Command): Promise<Result> {
         return pageScoped(cmd.id, tabId, { ...result, ...(openedTabs.length && { openedTabs }), download: { afterSequence: downloadFrom, started } });
       }
       case 'navigate': return await handleNavigate(cmd, s);
+      case 'network-mock': {
+        const tabId = await sessions.resolveTab(s, cmd.page);
+        await executor.ensureAttached(tabId, s.surface === 'browser');
+        const data = cmd.mock ? await setNetworkMock(tabId, cmd.mock) : await clearNetworkMock(tabId);
+        return pageScoped(cmd.id, tabId, data);
+      }
       case 'tabs': return await handleTabs(cmd, s);
       case 'cookies': return await handleCookies(cmd);
       case 'screenshot': { const tabId = await sessions.resolveTab(s, cmd.page); return pageScoped(cmd.id, tabId, await executor.screenshot(tabId, { format: cmd.format, quality: cmd.quality, fullPage: cmd.fullPage, width: cmd.width, height: cmd.height })); }

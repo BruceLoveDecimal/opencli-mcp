@@ -1,5 +1,5 @@
 /** The transport surface used by the browser object API. */
-import type { ActSpec, ActResult, DialogInfo, ConsoleEntry, DownloadWaitResult } from '../protocol.js';
+import type { ActSpec, ActResult, DialogInfo, ConsoleEntry, DownloadWaitResult, NetworkMockSpec } from '../protocol.js';
 import type { Expectation, CheckResult } from '../shared/page-contract.js';
 
 export interface ScreenshotOptions { format?: 'png' | 'jpeg'; quality?: number; fullPage?: boolean; width?: number; height?: number }
@@ -13,6 +13,7 @@ export interface RuntimePage {
   networkRequests(includeStatic?: boolean): Promise<unknown[]>;
   getActivePage(): string | undefined;
   cdp(method: string, params?: Record<string, unknown>): Promise<unknown>;
+  networkMock(spec?: NetworkMockSpec): Promise<unknown>;
   newTab(url?: string): Promise<string | undefined>;
   closeTab(target?: string): Promise<void>;
   releaseTab(target?: string): Promise<void>;

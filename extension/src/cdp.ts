@@ -1,5 +1,6 @@
 // Derived from OpenCLI (https://github.com/jackwener/OpenCLI), Apache-2.0. Adapted for opencli-mcp.
 import type { DownloadWaitResult } from '../../src/protocol.js';
+import { forgetNetworkGuard, forgetNetworkMock, handleFetchPaused, restoreNetworkInterception } from './network-mock';
 /**
  * CDP execution via chrome.debugger API.
  *
@@ -370,6 +371,7 @@ async function attachNow(tabId: number, aggressiveRetry: boolean): Promise<void>
       // the next start-capture re-arms cleanly.
     }
   }
+  await restoreNetworkInterception(tabId);
 }
 
 export async function evaluate(
@@ -769,6 +771,7 @@ export function hasActiveNetworkCapture(tabId: number): boolean {
 
 export async function detach(tabId: number): Promise<void> {
   oopifByTab.delete(tabId);
+  forgetNetworkMock(tabId);
   if (!attached.has(tabId)) return;
   attached.delete(tabId);
   networkCaptures.delete(tabId);
@@ -782,6 +785,7 @@ export function registerListeners(): void {
   });
   chrome.debugger.onEvent.addListener((source, method, params: any) => {
     if (!source.tabId) return;
+    if (method === 'Fetch.requestPaused') { void handleFetchPaused(source, params ?? {}); return; }
     if (method.startsWith('Target.')) { trackOopifs(source, method, params); return; }
     if (method === 'Page.downloadWillBegin') { notePageDownload(source.tabId, params ?? {}); return; }
     if (method === 'Runtime.consoleAPICalled') {
@@ -805,7 +809,8 @@ export function registerListeners(): void {
     attached.delete(tabId);
     networkCaptures.delete(tabId);
     pageDownloads.delete(tabId);
-      oopifByTab.delete(tabId);
+    forgetNetworkGuard(tabId);
+    oopifByTab.delete(tabId);
   });
   chrome.debugger.onDetach.addListener((source) => {
     const sessionId = (source as { sessionId?: string }).sessionId;
@@ -819,6 +824,7 @@ export function registerListeners(): void {
       dialogs.delete(source.tabId);
       attached.delete(source.tabId);
       networkCaptures.delete(source.tabId);
+      forgetNetworkMock(source.tabId);
       oopifByTab.delete(source.tabId);
       for (const k of [...directTargets.keys()]) if (k.startsWith(`${source.tabId}:`)) directTargets.delete(k);
       return;

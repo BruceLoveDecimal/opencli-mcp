@@ -76,6 +76,8 @@ For integrations and custom workflows, the main tools are:
 | Task | Tools |
 |---|---|
 | Browse a page | `tab_open`, `tab_observe`, `tab_read`, `tab_act`, `tab_expect` |
+| Test composition and responsive layouts | `browser_ime`, `browser_viewport` |
+| Simulate a URL-scoped network fault | `network_mock` (clear after the scenario) |
 | Find or use an existing tab | `tab_list`, `tab_claim` |
 | Wait for a download started by an action | `tab_download_wait` |
 | Keep a tab open or close it | `tab_release`, `tab_close` |

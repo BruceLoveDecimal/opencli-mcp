@@ -192,6 +192,7 @@ class ExtensionPage implements ExtensionRuntimePage {
   async frames(): Promise<Array<{ index: number; frameId: string; url: string; name: string }>> { const r = await this.send('frames'); return Array.isArray(r.data) ? r.data as Array<{ index: number; frameId: string; url: string; name: string }> : []; }
   async evaluateInFrame(js: string, frameIndex: number): Promise<unknown> { return (await this.send('exec', { code: wrapForEval(js), frameIndex })).data; }
   async cdp(method: string, params?: Record<string, unknown>): Promise<unknown> { return (await this.send('cdp', { cdpMethod: method, cdpParams: params })).data; }
+  async networkMock(spec?: import('../protocol.js').NetworkMockSpec): Promise<unknown> { return (await this.send('network-mock', { mock: spec })).data; }
 
   // ── opencli-mcp extras ──
   async nameSession(name: string): Promise<void> { await this.bridge.send('session-name', { ...this.sessionOpts(), name }); }

@@ -14,7 +14,7 @@
 export type Action =
   // page control
   | 'exec' | 'navigate' | 'tabs' | 'cookies' | 'screenshot'
-  | 'network-capture-start' | 'network-capture-read'
+  | 'network-capture-start' | 'network-capture-read' | 'network-mock'
   | 'wait-download' | 'cdp' | 'frames'
   // session & tab-lifecycle (Codex-style: name, claim, finalize)
   | 'session-name' | 'session-finalize' | 'user-tabs' | 'claim' | 'close-user-tabs' | 'mark'
@@ -82,6 +82,20 @@ export interface Command {
   visible?: boolean;
   /** act */
   act?: ActSpec;
+  /** Bounded network fault injection. Undefined clears this tab's mock. */
+  mock?: NetworkMockSpec;
+}
+
+export interface NetworkMockSpec {
+  /** URL substring; only matching requests are affected. */
+  url: string;
+  delayMs?: number;
+  offline?: boolean;
+  dropResponse?: boolean;
+  status?: number;
+  emptyObject?: boolean;
+  /** Duplicate complete SSE frames once while preserving their ids. */
+  replayEvents?: boolean;
 }
 
 export type ActKind = 'click' | 'dblclick' | 'hover' | 'focus' | 'fill' | 'type' | 'press' | 'check' | 'uncheck' | 'select' | 'scroll' | 'upload' | 'drag';
@@ -193,7 +207,7 @@ export type BrowserEvent =
 
 export type HostToExt = { type: 'command'; command: Command } | { type: 'ready'; version: string; port: number };
 /** Bump when the host and extension command contract changes. Package versions are independent. */
-export const PROTOCOL_REVISION = 1;
+export const PROTOCOL_REVISION = 2;
 export type BrowserFeature = 'cdp' | 'network' | 'frames' | 'dialogs' | 'console' | 'downloads' | 'viewport' | 'visibility' | 'webmcp';
 export type ExtToHost =
   | { type: 'hello'; extensionVersion: string; protocolRevision: number; features: BrowserFeature[] }

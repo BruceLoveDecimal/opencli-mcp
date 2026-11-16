@@ -173,6 +173,17 @@ export function createMcpServer(rt: Runtime, sessionId: string, opts: { version?
     return ok({ tab: t.id, ...(await t.network.detail({ seq, part, start, maxChars })) });
   }));
   if (!rt.hasFeature('network')) networkTool.disable();
+  const networkMockTool = server.registerTool('network_mock', { title: 'Inject a bounded network fault', description: 'set affects only requests whose URL contains url. Delay, fail offline, drop the response, return an HTTP status/empty JSON object, or replay each SSE frame once. clear removes the mock and restores normal traffic. Always clear after the scenario.',
+    inputSchema: { tab: z.string().optional(), action: z.enum(['set', 'clear']).default('set'), url: z.string().min(1).optional(), delayMs: z.number().int().min(0).max(60_000).default(0), offline: z.boolean().default(false), dropResponse: z.boolean().default(false), status: z.number().int().min(100).max(599).optional(), emptyObject: z.boolean().default(false), replayEvents: z.boolean().default(false) },
+    annotations: { destructiveHint: true, openWorldHint: true },
+  }, async ({ tab, action, url, delayMs, offline, dropResponse, status, emptyObject, replayEvents }) => run(async () => {
+    const t = await tabOf(tab);
+    if (action === 'clear') return ok({ tab: t.id, ...(await t.network.clearMock() as Record<string, unknown>) });
+    if (!url) throw new ActionError('invalid_args', 'network_mock set requires url.');
+    if ([offline, dropResponse, replayEvents].filter(Boolean).length > 1 || (status !== undefined && emptyObject)) throw new ActionError('invalid_args', 'Choose only one response fault at a time.');
+    return ok({ tab: t.id, ...(await t.network.mock({ url, delayMs, offline, dropResponse, ...(status !== undefined && { status }), emptyObject, replayEvents }) as Record<string, unknown>) });
+  }));
+  if (!rt.hasFeature('network')) networkMockTool.disable();
   const downloadTool = server.registerTool('tab_download_wait', { title: 'Wait for a download', description: 'Wait for the download begun after one tab_act. Copy download.afterSequence from that action and use the same tab. downloaded:true means Chrome completed the file; not_started, unconfirmed, ambiguous, and cursor_expired do not prove completion.',
     inputSchema: { tab: z.string().optional().describe('same page handle used by tab_act; required when the session has multiple tabs'), afterSequence: z.number().int().min(0).describe('download.afterSequence from tab_act'), timeoutMs: z.number().int().min(1).max(120_000).default(30_000) }, annotations: { readOnlyHint: true },
   }, async ({ tab, afterSequence, timeoutMs }) => run(async () => {
@@ -209,8 +220,10 @@ export function createMcpServer(rt: Runtime, sessionId: string, opts: { version?
   }));
   const onFeaturesChanged = (): void => {
     if (networkTool.enabled !== rt.hasFeature('network')) networkTool.update({ enabled: rt.hasFeature('network') });
+    if (networkMockTool.enabled !== rt.hasFeature('network')) networkMockTool.update({ enabled: rt.hasFeature('network') });
     if (consoleTool.enabled !== rt.hasFeature('console')) consoleTool.update({ enabled: rt.hasFeature('console') });
     if (downloadTool.enabled !== rt.hasFeature('downloads')) downloadTool.update({ enabled: rt.hasFeature('downloads') });
+    if (viewportTool.enabled !== rt.hasFeature('viewport')) viewportTool.update({ enabled: rt.hasFeature('viewport') });
     if (server.isConnected()) server.sendResourceListChanged();
   };
   if (persistent) rt.on('features-changed', onFeaturesChanged);
@@ -231,6 +244,19 @@ export function createMcpServer(rt: Runtime, sessionId: string, opts: { version?
       return ok({ tab: t.id, ...r, observationError: errorEnvelope(error).error, hint: 'Action already delivered. Observe read-only for the current state; do not replay the action.' });
     }
   }));
+  const viewportTool = server.registerTool('browser_viewport', { title: 'Set viewport dimensions', description: 'Temporarily set or reset this tab viewport. Use mobile:true for the H5 layout, then read the fresh page state and restore with reset.',
+    inputSchema: { tab: z.string().optional(), action: z.enum(['set', 'reset']).default('set'), width: z.number().int().min(200).max(7680).default(1440), height: z.number().int().min(320).max(4320).default(900), mobile: z.boolean().default(false) }, annotations: { destructiveHint: true },
+  }, async ({ tab, action, width, height, mobile }) => run(async () => {
+    const t = await tabOf(tab);
+    return ok({ tab: t.id, ...(await (action === 'reset' ? t.resetViewport() : t.viewport({ width, height, mobile }))) });
+  }));
+  if (!rt.hasFeature('viewport')) viewportTool.disable();
+  server.registerTool('browser_ime', { title: 'Compose text with the browser IME', description: 'Focus an observed editor and use Chrome composition events. compose leaves candidate text active; commit inserts text without Enter; cancel clears the composition. Use tab_act press for Enter behavior.',
+    inputSchema: { tab: z.string().optional(), target: targetSchema, text: z.string().max(4000).default(''), action: z.enum(['compose', 'commit', 'cancel']).default('compose') }, annotations: { destructiveHint: true },
+  }, async ({ tab, target, text, action }) => run(async () => {
+    const t = await tabOf(tab);
+    return ok({ tab: t.id, ...(await t.ime({ target: target as Parameters<Tab['ime']>[0]['target'], text, action })) });
+  }));
   server.registerTool('tab_expect', { title: 'Expect', description: 'Assert what the page must show now. At least one of text / notText / url / title / selector / ref is required (visible:false requires absence, and needs selector or ref). Polls up to timeout seconds; fails with expectation_failed.', inputSchema: { tab: z.string().optional().describe('required when the session has more than one tab'), text: z.string().optional(), notText: z.string().optional(), url: z.string().optional(), title: z.string().optional(), selector: z.string().optional(), ref: z.string().optional(), visible: z.boolean().optional().describe('with selector or ref; false requires absence'), timeout: z.number().default(5) }, annotations: { readOnlyHint: true } }, async ({ tab, timeout, ...what }) => run(async () => { checkExpect(what); const t = await tabOf(tab); return ok({ tab: t.id, ...(await t.expect(what, { timeoutMs: timeout * 1000 })) }); }));
 
   // ── sites ──
@@ -243,7 +269,7 @@ export function createMcpServer(rt: Runtime, sessionId: string, opts: { version?
   const valueDef: z.ZodType<import('opencli-mcp/adapter-sdk').ArgValue> = z.lazy(() => z.object({
     type: z.enum(['string', 'int', 'number', 'boolean', 'array', 'object']).optional(), nullable: z.boolean().optional(),
     choices: z.array(z.union([z.string(), z.number(), z.boolean()])).optional(),
-    items: valueDef.optional(), properties: z.record(z.string(), valueDef.and(z.object({ required: z.boolean().optional(), help: z.string().optional() }))).optional(),
+    items: valueDef.optional(), properties: z.record(z.string(), valueDef.and(z.object({ required: z.boolean().optional(), help: z.string().optional() }))).optional(), open: z.boolean().optional(),
     min: z.number().optional(), max: z.number().optional(), minLength: z.number().int().min(0).optional(), maxLength: z.number().int().min(0).optional(), example: z.unknown().optional(),
   }));
   const argDef = valueDef.and(z.object({ name: z.string(), default: z.unknown().optional(), required: z.boolean().optional(), help: z.string().optional() }));

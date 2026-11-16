@@ -8,9 +8,11 @@ site's own API from the logged-in page (`_shared.js`), so they need a browser pr
   solves it: with `captcha_wait_sec` it waits for a person to complete the check in the same page, without it fails
   with `captcha_required`. Already signed in to the same account, it returns at once without touching the form.
 - **Read**: `whoami`, `credits`, `works`, `work`, `projects`, `conversation`, `generation-wait`, `avatars`, `voices`, `image-models`,
-  `agent-models`, `agent-tools`, `sitemap`.
+  `agent-models`, `agent-tools`, `sitemap`, `chat-history`, `skill-list`, `model-catalog`, `interaction-state`,
+  `attachment-inspect`, `canvas-nodes`, `media-probe`, `media-inspect`.
 - **Write** (spend credits or the free daily uses): `agent-chat`, `agent-image`, `agent-video`, `ai-image`, `ai-video`,
-  `avatar-video`.
+  `avatar-video`, `chat-turn`, `interaction-action`. Other writes: `chat-stop`, `attachment-upload` (selects files but never sends),
+  `agent-settings`, `canvas-project`, `canvas-save`.
 
 ## Conversation scope and UI acceptance
 
@@ -28,6 +30,38 @@ the backend distinguishes ordinary `CHAT` (default, no `project_id`) from `INFIN
 (required `project_id`), and isolates their histories. A successful Canvas answer cannot prove an
 ordinary chat UI case passed. For example, an API answer of “1+1=2” while the page still shows
 “你好” proves the API command returned a result, not that the page sent or displayed that exchange.
+
+## Agent acceptance commands
+
+- `chat-turn` sends ordinary `CHAT` without `project_id`, supports same-session follow-ups, selected Skill IDs, formal
+  attachments and frozen Ask/Auto settings. It retains bounded SSE frames with nested tokens/credentials redacted and
+  the exact session/turn/conversation handles. `chat-history` reads only ordinary history; `chat-stop` returns a cancellation receipt, not a terminal state.
+- `skill-list` keeps stable `skill_id` values across languages and exposes local filtering/pagination. `model-catalog`
+  separates driving models from Video/Image/Audio media groups using `model_type`, never `category`.
+- `attachment-upload` operates a real file input and never sends. Only formal URLs from successful responses can be
+  reused. `attachment-inspect` validates type, order, count, missing URLs and Canvas `source_node_id` references.
+- `interaction-action` resumes fee/question cards with `interaction_action`, or voice selection with its original
+  envelope. Form submit/skip requires an explicit reusable `submission_id` and current `form_version`; `interaction-state`
+  is the read-only recovery path. Acceptance, turn completion and billing remain distinct.
+- `canvas-project`, `canvas-nodes` and `canvas-save` cover empty project creation, persisted snapshots, node/output
+  provenance and idempotent incremental saves. A save is marked persisted only after a fresh snapshot confirms its
+  request, operation IDs and revision.
+- `agent-settings` normalizes thresholds to 0.1–100 with one decimal and migrates legacy 0.1 to 10 only when `legacy:true`.
+  Its apply action uses real controls; reload and the next new-turn request must still confirm persistence.
+- `media-probe` downloads bytes and checks MIME, non-empty content and SHA-256 before image/audio decoding or video
+  can-play validation. `media-inspect` performs up to 8 independent checks in one call. Interrupted downloads retain
+  received chunks in the tab and resume with HTTP Range. Video can-play is not full playback, and none of these
+  commands proves rendered UI behavior.
+
+The engine also exposes typed `network_mock`, `browser_viewport` and `browser_ime` tools. Network mocks are scoped to
+one URL substring and support delay, offline/dropped responses, HTTP status, empty JSON and duplicate SSE frames.
+Always clear them after the scenario. Viewport changes require fresh element refs; IME composition does not synthesize
+Enter. These capabilities require adapter API 3 and protocol revision 2.
+
+Coverage mapping: attachments AC-03–06/15/65–67; chat and recovery AC-01/12/39–46; catalogues AC-07–15/58;
+interactions AC-21–38/47–48/61/72; Canvas AC-54/63–76; settings AC-16–20; media AC-49–51/57/68–69; viewport and IME
+AC-02/38/56/59/76. This maps supporting evidence, not an automatic pass: every visual, focus, layout, click, playback,
+permission, billing and cross-account assertion still needs its real page/service evidence.
 
 ## Waiting after a UI submission
 

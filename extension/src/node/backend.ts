@@ -10,6 +10,7 @@
  */
 import type { BrowserEvent, BrowserFeature, Command, Result } from '../../../src/protocol.js';
 import * as executor from '../cdp';
+import { clearNetworkMock, setNavigationGuard, setNetworkMock } from '../network-mock';
 import * as identity from '../identity';
 import { performAct, ActError } from '../act';
 import { evaluateInEngine, evaluateMain, registerFrameTracking, forgetTab as forgetEngineTab } from '../world';
@@ -22,7 +23,7 @@ const CDP_ALLOWLIST = new Set([
   'Accessibility.enable', 'Accessibility.getFullAXTree', 'Accessibility.getPartialAXTree',
   'DOM.enable', 'DOM.getDocument', 'DOM.getBoxModel', 'DOM.getContentQuads', 'DOM.focus', 'DOM.querySelector', 'DOM.querySelectorAll', 'DOM.scrollIntoViewIfNeeded', 'DOM.describeNode', 'DOM.getNodeForLocation',
   'DOMSnapshot.captureSnapshot',
-  'Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText', 'Input.dispatchTouchEvent',
+  'Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText', 'Input.imeSetComposition', 'Input.dispatchTouchEvent',
   'Page.getLayoutMetrics', 'Page.captureScreenshot', 'Page.getFrameTree', 'Page.handleJavaScriptDialog', 'Page.getNavigationHistory',
   'Runtime.enable', 'Runtime.getHeapUsage',
   'Emulation.setDeviceMetricsOverride', 'Emulation.clearDeviceMetricsOverride',
@@ -92,18 +93,8 @@ export async function startCdpBackend(opts: CdpBackendOptions): Promise<CdpBacke
   async function guardTab(tab: ShimTab): Promise<void> {
     if (allowed.size === 0 || guarded.has(tab.id)) return;
     guarded.add(tab.id);
-    await shim.send(tab.id, 'Fetch.enable', { patterns: [{ urlPattern: '*', resourceType: 'Document', requestStage: 'Request' }] }).catch(() => guarded.delete(tab.id));
+    await setNavigationGuard(tab.id, allows).catch(() => guarded.delete(tab.id));
   }
-  shim.api.debugger.onEvent.addListener((source, method, params) => {
-    if (method !== 'Fetch.requestPaused' || source.tabId === undefined) return;
-    const p = params as { requestId: string; request: { url: string } };
-    const debuggee = source.sessionId ? { tabId: source.tabId, sessionId: source.sessionId } : { tabId: source.tabId };
-    const reply = allows(p.request.url)
-      ? shim.api.debugger.sendCommand(debuggee, 'Fetch.continueRequest', { requestId: p.requestId })
-      // Aborted cancels the navigation and keeps the current document; BlockedByClient would replace it with an error page
-      : shim.api.debugger.sendCommand(debuggee, 'Fetch.failRequest', { requestId: p.requestId, errorReason: 'Aborted' });
-    void reply.catch(() => {});
-  });
 
   // popups: a new tab whose opener is a session tab joins that session, and the running action reports it
   shim.onTabCreated.addListener((tab) => {
@@ -370,6 +361,12 @@ export async function startCdpBackend(opts: CdpBackendOptions): Promise<CdpBacke
         case 'frames': { const tabId = await resolveTab(s, cmd.page); return { id: cmd.id, ok: true, data: await executor.listFrames(tabId) }; }
         case 'network-capture-start': { const tabId = await resolveTab(s, cmd.page); await executor.startNetworkCapture(tabId, cmd.pattern); return pageScoped(cmd.id, tabId, { started: true }); }
         case 'network-capture-read': { const tabId = await resolveTab(s, cmd.page); return pageScoped(cmd.id, tabId, await executor.readNetworkCapture(tabId)); }
+        case 'network-mock': {
+          const tabId = await resolveTab(s, cmd.page);
+          await executor.ensureAttached(tabId, aggressive);
+          const data = cmd.mock ? await setNetworkMock(tabId, cmd.mock) : await clearNetworkMock(tabId);
+          return pageScoped(cmd.id, tabId, data);
+        }
         case 'session-name': { if (!cmd.name) return { id: cmd.id, ok: false, error: 'Missing name' }; s.name = cmd.name; return { id: cmd.id, ok: true, data: { name: cmd.name } }; }
         case 'mark': {
           if (!cmd.page) return { id: cmd.id, ok: false, error: 'Missing page' };

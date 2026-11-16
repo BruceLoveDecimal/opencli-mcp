@@ -56,6 +56,9 @@ class Tab {
   release(): Promise<void>; // Keep this tab open and give up this session's control of it.
   observe(opts?: ObserveOptions): Promise<{ url: string | null; title: string | null; state?: string; snapshotId?: string; diff?: boolean; changed?: { added: number; removed: number; changed?: number; }; image?: ImageValue; }>;
   screenshot(opts?: { fullPage?: boolean; annotate?: boolean; format?: "png" | "jpeg"; quality?: number; }): Promise<ImageValue>;
+  viewport(opts: { width: number; height: number; mobile?: boolean; }): Promise<Record<string, unknown>>;
+  resetViewport(): Promise<Record<string, unknown>>;
+  ime(opts: { target: Target; text: string; action: "compose" | "commit" | "cancel"; }): Promise<Record<string, unknown>>; // Drive Chrome's composition path instead of synthesizing an Enter key during IME candidate selection.
   find(target: (Target & { limit?: number; }) | { query: string; limit?: number; }): Promise<FindResult | ElementAtResult | QueryFindResult>;
   read(opts?: ReadOptions): Promise<ReadTextResult>; // Linear text of a bounded document. Scrolls to mount lazy content, retains repeated text from distinct nodes, restores the scroll position. No refs. A feed that grows without a bottom returns reason `unbounded` and the head already read — do not call it again to finish the feed.
   act(opts: ActOptions): Promise<Record<string, unknown>>; // wait + act in one call at the runtime edge: locate → wait actionable → hit-test → real input → settle. `method:'dom'` skips the mouse event.
@@ -75,6 +78,8 @@ class Tab {
   };
   network: {
     start(pattern?: string): Promise<boolean>;
+    mock(spec: NetworkMockSpec): Promise<unknown>;
+    clearMock(): Promise<unknown>;
     list(opts?: { filter?: string; limit?: number; afterSequence?: number; }): Promise<{ cursor: number; entries: Array<Record<string, unknown>>; hasMore: boolean; }>;
     detail(opts: { seq?: number; requestId?: string; part?: "request" | "response"; start?: number; maxChars?: number; }): Promise<Record<string, unknown>>;
     read(opts?: { pattern?: string; limit?: number; includeStatic?: boolean; afterSequence?: number; }): Promise<{ cursor: number; entries: Array<unknown>; hasMore: boolean; }>; // Cursor-paged read: pass `afterSequence` from the previous result to get only new requests. Returns network rows only; endpoint candidates come from the explicit `recon.discover(tab)` (not a hidden side effect of reading).
@@ -153,6 +158,7 @@ interface DownloadWaitResult {
   finalUrl?: string;
   mime?: string;
   totalBytes?: number;
+  receivedBytes?: number;
   state?: string;
   danger?: string;
   error?: string;
