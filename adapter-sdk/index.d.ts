@@ -52,6 +52,7 @@ export interface Tab {
   screenshot(opts?: { fullPage?: boolean; annotate?: boolean; format?: 'png' | 'jpeg'; quality?: number }): Promise<unknown>;
   viewport(opts: { width: number; height: number; mobile?: boolean }): Promise<Record<string, unknown>>;
   resetViewport(): Promise<Record<string, unknown>>;
+  inspectViewport(): Promise<Record<string, unknown>>;
   ime(opts: { target: Record<string, unknown>; text: string; action: 'compose' | 'commit' | 'cancel' }): Promise<Record<string, unknown>>;
   readonly network: {
     start(pattern?: string): Promise<boolean>;

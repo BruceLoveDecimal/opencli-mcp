@@ -16,7 +16,7 @@ export interface CdpOptions {
   /** CDP endpoint to drive; without it, `launch` must be set. */
   endpoint?: string;
   /** Start a headless Chrome (this path, or found with findChrome) and drive it. */
-  launch?: { chrome?: string };
+  launch?: { chrome?: string; proxy?: string };
   allowedOrigins?: string[];
 }
 
@@ -32,7 +32,7 @@ export async function runCdp(opts: CdpOptions): Promise<void> {
   if (!endpoint) {
     const binary = opts.launch?.chrome ?? findChrome();
     if (!binary) throw new Error('no Chrome found: pass --chrome <path> or set CHROME_PATH');
-    chrome = await launchHeadlessChrome(binary);
+    chrome = await launchHeadlessChrome(binary, opts.launch?.proxy);
     endpoint = chrome.endpoint;
     log(`launched headless Chrome ${binary}`);
   }

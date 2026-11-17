@@ -244,11 +244,11 @@ export function createMcpServer(rt: Runtime, sessionId: string, opts: { version?
       return ok({ tab: t.id, ...r, observationError: errorEnvelope(error).error, hint: 'Action already delivered. Observe read-only for the current state; do not replay the action.' });
     }
   }));
-  const viewportTool = server.registerTool('browser_viewport', { title: 'Set viewport dimensions', description: 'Temporarily set or reset this tab viewport. Use mobile:true for the H5 layout, then read the fresh page state and restore with reset.',
-    inputSchema: { tab: z.string().optional(), action: z.enum(['set', 'reset']).default('set'), width: z.number().int().min(200).max(7680).default(1440), height: z.number().int().min(320).max(4320).default(900), mobile: z.boolean().default(false) }, annotations: { destructiveHint: true },
+  const viewportTool = server.registerTool('browser_viewport', { title: 'Inspect or set viewport dimensions', description: 'inspect reads actual CSS dimensions without changing emulation. set temporarily resizes this tab; use mobile:true for H5 and restore with reset.',
+    inputSchema: { tab: z.string().optional(), action: z.enum(['set', 'reset', 'inspect']).default('set'), width: z.number().int().min(200).max(7680).default(1440), height: z.number().int().min(320).max(4320).default(900), mobile: z.boolean().default(false) }, annotations: { destructiveHint: true },
   }, async ({ tab, action, width, height, mobile }) => run(async () => {
     const t = await tabOf(tab);
-    return ok({ tab: t.id, ...(await (action === 'reset' ? t.resetViewport() : t.viewport({ width, height, mobile }))) });
+    return ok({ tab: t.id, ...(await (action === 'inspect' ? t.inspectViewport() : action === 'reset' ? t.resetViewport() : t.viewport({ width, height, mobile }))) });
   }));
   if (!rt.hasFeature('viewport')) viewportTool.disable();
   server.registerTool('browser_ime', { title: 'Compose text with the browser IME', description: 'Focus an observed editor and use Chrome composition events. compose leaves candidate text active; commit inserts text without Enter; cancel clears the composition. Use tab_act press for Enter behavior.',

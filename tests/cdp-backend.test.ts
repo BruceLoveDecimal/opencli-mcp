@@ -96,7 +96,10 @@ async function resizePage(endpoint: string, url: string, width: number, height: 
 
 async function startSite(): Promise<{ url: string; close: () => Promise<void> }> {
   let flaky = 0;
+  let pending: http.ServerResponse | undefined;
   const server = http.createServer((req, res) => {
+    if (req.url === '/pending') { pending = res; res.writeHead(200, { 'content-type': 'text/html' }); res.write('<!doctype html><html><head><title>Loading</title>'); return; }
+    if (req.url === '/release') { pending?.end('</head><body><h1>Ready now</h1></body></html>'); res.end('released'); return; }
     if (req.url === '/file') { res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename=sample.txt' }).end('download evidence'); return; }
     if (req.url === '/download') { res.writeHead(200, { 'content-type': 'text/html' }).end('<a href="/file">Download</a>'); return; }
     if (req.url === '/pixel.gif') {
@@ -251,6 +254,19 @@ describe.skipIf(!CHROME)('cdp backend', () => {
     }
   }, 60_000);
 
+  it('reports an unfinished document and recovers by observing without replaying navigation', async () => {
+    const site = await startSite(); cleanup.push(site.close);
+    const chrome = await startChrome();
+    cleanup.push(async () => { chrome.proc.kill(); await new Promise((r) => chrome.proc.once('exit', r)); fs.rmSync(chrome.profile, { recursive: true, force: true, maxRetries: 5 }); });
+    const transport = new StdioClientTransport({ command: process.execPath, args: ['--import', 'tsx', path.resolve('src/main.ts'), 'cdp', '--endpoint', chrome.endpoint], stderr: 'ignore' });
+    const client = new Client({ name: 'loading-test', version: '1' }, { capabilities: {} });
+    await client.connect(transport); cleanup.push(() => client.close());
+    const loading = parse(await client.callTool({ name: 'tab_open', arguments: { url: `${site.url}/pending` } }));
+    expect(loading).toMatchObject({ ok: false, error: { code: 'page_not_ready' } });
+    await fetch(`${site.url}/release`);
+    expect(parse(await client.callTool({ name: 'tab_observe', arguments: {} }))).toMatchObject({ ok: true, state: expect.stringContaining('Ready now') });
+  }, 45_000);
+
   it('exposes viewport, IME and bounded network faults as typed MCP tools', async () => {
     const site = await startSite(); cleanup.push(site.close);
     const chrome = await startChrome();
@@ -259,7 +275,13 @@ describe.skipIf(!CHROME)('cdp backend', () => {
     const client = new Client({ name: 'network-tools-test', version: '1' }, { capabilities: {} });
     await client.connect(transport); cleanup.push(() => client.close());
     expect(parse(await client.callTool({ name: 'tab_open', arguments: { url: site.url } })).ok).toBe(true);
-    expect(parse(await client.callTool({ name: 'browser_viewport', arguments: { width: 360, height: 740, mobile: true } }))).toMatchObject({ ok: true, requested: { width: 360, height: 740, mobile: true } });
+    const resized = parse(await client.callTool({ name: 'browser_viewport', arguments: { width: 360, height: 740, mobile: true } }));
+    expect(resized).toMatchObject({ ok: true, requested: { width: 360, height: 740, mobile: true } });
+    const inspected = parse(await client.callTool({ name: 'browser_viewport', arguments: { action: 'inspect' } }));
+    expect(inspected).toMatchObject({ ok: true, width: resized.width, height: resized.height });
+    expect(inspected.width).toBeGreaterThan(0);
+    expect(inspected.height).toBeGreaterThan(0);
+    expect(parse(await client.callTool({ name: 'browser_viewport', arguments: { action: 'inspect' } }))).toMatchObject({ width: inspected.width, height: inspected.height });
     expect(parse(await client.callTool({ name: 'browser_viewport', arguments: { action: 'reset' } })).ok).toBe(true);
     expect(parse(await client.callTool({ name: 'browser_ime', arguments: { target: { label: 'Name' }, text: '拼', action: 'compose' } }))).toMatchObject({ ok: true, delivered: true, action: 'compose', state: { value: '拼' } });
     expect(parse(await client.callTool({ name: 'browser_ime', arguments: { target: { label: 'Name' }, text: '音', action: 'commit' } }))).toMatchObject({ ok: true, delivered: true, action: 'commit' });

@@ -56,6 +56,7 @@ class Tab {
   release(): Promise<void>; // Keep this tab open and give up this session's control of it.
   observe(opts?: ObserveOptions): Promise<{ url: string | null; title: string | null; state?: string; snapshotId?: string; diff?: boolean; changed?: { added: number; removed: number; changed?: number; }; image?: ImageValue; }>;
   screenshot(opts?: { fullPage?: boolean; annotate?: boolean; format?: "png" | "jpeg"; quality?: number; }): Promise<ImageValue>;
+  inspectViewport(): Promise<Record<string, unknown>>;
   viewport(opts: { width: number; height: number; mobile?: boolean; }): Promise<Record<string, unknown>>;
   resetViewport(): Promise<Record<string, unknown>>;
   ime(opts: { target: Target; text: string; action: "compose" | "commit" | "cancel"; }): Promise<Record<string, unknown>>; // Drive Chrome's composition path instead of synthesizing an Enter key during IME candidate selection.

@@ -232,7 +232,9 @@ export async function startCdpBackend(opts: CdpBackendOptions): Promise<CdpBacke
 
   async function isErrorDocument(tabId: number): Promise<string | null> {
     try {
-      const uri = await executor.evaluate(tabId, 'document.documentURI', false, 2_000);
+      // Error pages cannot use the normal page engine, whose URL guard deliberately rejects chrome-error://.
+      const result = await shim.send<{ result: { value?: string } }>(tabId, 'Runtime.evaluate', { expression: 'document.documentURI', returnByValue: true, timeout: 2000 });
+      const uri = result.result?.value;
       return typeof uri === 'string' && uri.startsWith('chrome-error://') ? uri : null;
     } catch { return null; }
   }

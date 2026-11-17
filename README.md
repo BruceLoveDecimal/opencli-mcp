@@ -76,7 +76,7 @@ For integrations and custom workflows, the main tools are:
 | Task | Tools |
 |---|---|
 | Browse a page | `tab_open`, `tab_observe`, `tab_read`, `tab_act`, `tab_expect` |
-| Test composition and responsive layouts | `browser_ime`, `browser_viewport` |
+| Test composition and responsive layouts | `browser_ime`, `browser_viewport` (`inspect` reads dimensions without resizing) |
 | Simulate a URL-scoped network fault | `network_mock` (clear after the scenario) |
 | Find or use an existing tab | `tab_list`, `tab_claim` |
 | Wait for a download started by an action | `tab_download_wait` |
@@ -86,6 +86,8 @@ For integrations and custom workflows, the main tools are:
 | Define and verify a site adapter | `tools_define`, `tools_try`, `tools_activate` |
 | Run multi-step JavaScript | `js`, `js_reset` |
 | Read built-in documentation | `docs_list`, `docs_get` |
+
+Headless sessions accept `cdp --launch --proxy system|direct|<server-url>`; HTTP(S) and SOCKS5 servers are supported without credentials in the URL. This changes routing only and keeps TLS certificate verification enabled.
 
 The browser workflow is **observe → act → verify → finalize**. `tab_observe` is the action map (accessibility snapshot with element references); pass its `snapshotId` as `since` for an exact diff. `tab_read` is rendered document text; pass its `readId` and `nextStart` back together to continue the same capture. Actions wait for their targets to be ready before dispatching browser input.
 

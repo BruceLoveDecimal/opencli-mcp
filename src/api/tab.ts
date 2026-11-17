@@ -112,6 +112,8 @@ export class Tab {
       const meta = await this.info(page);
       const out: { url: string | null; title: string | null; state?: string; snapshotId?: string; diff?: boolean; changed?: { added: number; removed: number; changed?: number }; image?: ImageValue } = { ...meta };
       if (mode === 'state' || mode === 'both') {
+        const ready = await page.evaluate<boolean>('Boolean(document.body)');
+        if (!ready) throw new ActionError('page_not_ready', 'The document body has not arrived yet.', 'Wait and observe this same tab again; do not replay the preceding action.');
         // one state source: Playwright's aria snapshot (credential values redacted); its [ref=eN] are the act targets
         let text = String(await page.pageCall('aria', { viewport: Boolean(opts.viewport) && !opts.ref, ...(opts.ref ? { ref: opts.ref } : {}) }));
         const key = `${this.id}:${opts.viewport && !opts.ref ? 'vp' : 'all'}:${opts.ref ?? ''}`;
@@ -148,6 +150,9 @@ export class Tab {
     } finally { if (opts.annotate) await page.pageCall('unannotate').catch(() => {}); }
   }
 
+  async inspectViewport(): Promise<Record<string, unknown>> {
+    return this.use((page) => page.evaluate<Record<string, unknown>>('({ width: innerWidth, height: innerHeight, deviceScaleFactor: devicePixelRatio, pointerCoarse: matchMedia("(pointer: coarse)").matches })'));
+  }
   async viewport(opts: { width: number; height: number; mobile?: boolean }): Promise<Record<string, unknown>> {
     return this.use(async (page) => {
       await page.cdp('Emulation.setDeviceMetricsOverride', { width: opts.width, height: opts.height, deviceScaleFactor: 1, mobile: opts.mobile ?? false });

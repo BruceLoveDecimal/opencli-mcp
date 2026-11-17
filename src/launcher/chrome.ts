@@ -25,11 +25,20 @@ export function findChrome(): string | undefined {
 
 export interface LaunchedChrome { endpoint: string; close(): Promise<void> }
 
-export async function launchHeadlessChrome(chrome: string): Promise<LaunchedChrome> {
+export function proxyArguments(proxy = 'system'): string[] {
+  if (proxy === 'system') return [];
+  if (proxy === 'direct') return ['--no-proxy-server'];
+  const url = new URL(proxy);
+  if (!['http:', 'https:', 'socks5:'].includes(url.protocol) || !url.hostname || url.username || url.password || url.pathname !== '' && url.pathname !== '/' || url.search || url.hash) throw new Error('proxy must be system, direct or an HTTP(S)/SOCKS5 server URL without credentials');
+  return [`--proxy-server=${url.origin === 'null' ? proxy : url.origin}`];
+}
+
+export async function launchHeadlessChrome(chrome: string, proxy?: string): Promise<LaunchedChrome> {
+  const networkArgs = proxyArguments(proxy);
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'opencli-mcp-chrome-'));
   const proc = spawn(chrome, [
     '--headless=new', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
-    '--no-first-run', '--no-default-browser-check', '--window-size=1280,800', 'about:blank',
+    '--no-first-run', '--no-default-browser-check', '--window-size=1280,800', ...networkArgs, 'about:blank',
   ], { stdio: 'ignore' });
   let exited = false;
   const gone = new Promise<void>((resolve) => proc.once('exit', () => { exited = true; resolve(); }));

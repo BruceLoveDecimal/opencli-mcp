@@ -46,6 +46,7 @@ Advanced:
                         any other ws(s):// URL (a single page, e.g. an embedded view)
   cdp --launch          Same, on a headless Chrome of its own (throwaway profile, closed on exit)
     --chrome <path>     Chrome binary for --launch (default: CHROME_PATH or a usual install)
+    --proxy <route>     --launch only: system (default), direct, or an HTTP(S)/SOCKS5 server URL
     --allow-origin <o>  Only let pages navigate to these origins (comma-separated)
   extension-path        Print the unpacked extension directory for development
   uninstall             Remove browser host registration (keeps MCP client settings)
@@ -61,10 +62,10 @@ async function main(): Promise<void> {
       return;
     }
     case 'cdp': {
-      const { values } = parseArgs({ args: argv.slice(1), options: { endpoint: { type: 'string' }, launch: { type: 'boolean' }, chrome: { type: 'string' }, 'allow-origin': { type: 'string' } } });
+      const { values } = parseArgs({ args: argv.slice(1), options: { endpoint: { type: 'string' }, launch: { type: 'boolean' }, chrome: { type: 'string' }, proxy: { type: 'string' }, 'allow-origin': { type: 'string' } } });
       if (Boolean(values.endpoint) === Boolean(values.launch)) { process.stderr.write('cdp needs --endpoint <url> or --launch\n'); process.exitCode = 2; return; }
       const { runCdp } = await import('./launcher/cdp.js');
-      await runCdp({ version: VERSION, endpoint: values.endpoint, launch: values.launch ? { chrome: values.chrome } : undefined, allowedOrigins: values['allow-origin']?.split(',').filter(Boolean) });
+      await runCdp({ version: VERSION, endpoint: values.endpoint, launch: values.launch ? { chrome: values.chrome, proxy: values.proxy } : undefined, allowedOrigins: values['allow-origin']?.split(',').filter(Boolean) });
       return;
     }
     case 'host': {
