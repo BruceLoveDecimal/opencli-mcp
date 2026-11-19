@@ -930,8 +930,8 @@ export function registerListeners(): void {
       const entry = state.entries[stateEntryIndex];
       if (!entry) return;
       const finish = () => { entry.done = true; };
-      // bodies only for what can carry data: JSON-ish XHR/fetch and documents; assets were filtered at request time
-      if (entry.responseContentType && !/json|graphql|x-component|text\/plain|javascript|html|xml/i.test(entry.responseContentType)) { finish(); return; }
+      // Keep completed textual responses, including SSE delivered by fetch.
+      if (entry.responseContentType && !/json|graphql|x-component|text\/(?:plain|event-stream)|javascript|html|xml/i.test(entry.responseContentType)) { finish(); return; }
       try {
         const body = await sendDebuggerCommand({ tabId }, 'Network.getResponseBody', { requestId }) as {
           body?: string;
